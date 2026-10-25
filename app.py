@@ -9,12 +9,18 @@ import streamlit as st
 
 from rag_engine import (
     DEFAULT_EMBEDDING_MODEL,
+    OLLAMA_BASE_URL,
+    create_handoff_request,
     delete_source,
     generate_answer,
     get_collection_stats,
+    get_operational_metrics,
     ingest_pdf_bytes,
+    list_handoff_requests,
     list_indexed_sources,
+    record_interaction,
     retrieve_context,
+    should_handoff,
 )
 
 
@@ -26,7 +32,7 @@ ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-OLLAMA_URL = "http://127.0.0.1:11434"
+OLLAMA_URL = OLLAMA_BASE_URL
 DEFAULT_MODEL = "qwen3:4b"
 
 st.set_page_config(
@@ -288,6 +294,7 @@ def initialize_state():
         "temperature": 0.2,
         "num_ctx": 4096,
         "top_k": 5,
+        "min_similarity": 0.45,
         "chunk_size": 800,
         "overlap": 120,
     }
@@ -522,6 +529,15 @@ with st.sidebar:
         args=("Thống kê",),
     )
 
+    st.button(
+        "🙋  Hàng đợi nhân viên",
+        key="nav_handoff",
+        use_container_width=True,
+        type="primary" if current_page == "Hàng đợi nhân viên" else "secondary",
+        on_click=set_page,
+        args=("Hàng đợi nhân viên",),
+    )
+
     st.divider()
 
     st.markdown("### ⚙️ Cấu hình mô hình")
@@ -553,6 +569,15 @@ with st.sidebar:
         max_value=10,
         step=1,
         key="top_k",
+    )
+
+    st.slider(
+        "Ngưỡng chuyển nhân viên",
+        min_value=0.10,
+        max_value=0.90,
+        step=0.05,
+        key="min_similarity",
+        help="Nếu similarity cao nhất thấp hơn ngưỡng, câu hỏi sẽ được đề nghị chuyển nhân viên.",
     )
 
     st.divider()
@@ -693,12 +718,25 @@ def render_chat_page():
                         top_k=int(st.session_state["top_k"]),
                     )
 
-                    answer = generate_answer(
+                    answer, generation_metadata = generate_answer(
                         prompt,
                         hits,
                         model=st.session_state["model"],
                         temperature=float(st.session_state["temperature"]),
                         num_ctx=int(st.session_state["num_ctx"]),
+                    )
+                    handoff_required, handoff_reason = should_handoff(
+                        hits,
+                        generation_metadata,
+                        min_similarity=float(st.session_state["min_similarity"]),
+                    )
+                    best_similarity = max(
+                        (float(hit.get("similarity", 0.0)) for hit in hits),
+                        default=0.0,
+                    )
+                    record_interaction(
+                        handoff_required=handoff_required,
+                        best_similarity=best_similarity,
                     )
 
                 if answer is None:
@@ -710,11 +748,35 @@ def render_chat_page():
                 if hits:
                     render_sources(hits)
 
+                if handoff_required:
+                    st.warning(
+                        "⚠️ Câu hỏi này cần nhân viên kiểm tra thêm. "
+                        f"Lý do: {handoff_reason}"
+                    )
+                    if st.button(
+                        "🙋 Chuyển câu hỏi cho nhân viên",
+                        key=f"handoff_{len(st.session_state['messages'])}",
+                        type="primary",
+                    ):
+                        create_handoff_request(
+                            question=prompt,
+                            answer=answer,
+                            reason=handoff_reason,
+                            hits=hits,
+                        )
+                        st.success(
+                            "Đã ghi nhận yêu cầu. Nhân viên có thể tiếp nhận "
+                            "tại trang Hàng đợi nhân viên."
+                        )
+
                 st.session_state["messages"].append(
                     {
                         "role": "assistant",
                         "content": answer,
                         "hits": hits or [],
+                        "handoff_required": handoff_required,
+                        "handoff_reason": handoff_reason,
+                        "generation_metadata": generation_metadata,
                     }
                 )
 
@@ -919,9 +981,15 @@ def render_documents_page():
                     key=f"delete_source_{index}_{source_name}",
                     help=f"Xóa nguồn {source_name} khỏi chỉ mục",
                 ):
-                    st.session_state["pending_delete_source"] = source_name
+                    st.session_state["pending_delete_source_id"] = (
+                        source_item.get("source_id")
+                        if isinstance(source_item, dict)
+                        else None
+                    )
+                    st.session_state["pending_delete_source_name"] = source_name
 
-    pending_source = st.session_state.get("pending_delete_source")
+    pending_source_id = st.session_state.get("pending_delete_source_id")
+    pending_source = st.session_state.get("pending_delete_source_name")
 
     if pending_source:
         st.warning(
@@ -938,18 +1006,22 @@ def render_documents_page():
                 key="confirm_delete_source",
             ):
                 try:
-                    delete_source(pending_source)
+                    if not pending_source_id:
+                        raise ValueError("Không xác định được source_id của tài liệu.")
+                    delete_source(pending_source_id)
                     st.success(
                         f"Đã gửi yêu cầu xóa nguồn {pending_source}."
                     )
-                    st.session_state.pop("pending_delete_source", None)
+                    st.session_state.pop("pending_delete_source_id", None)
+                    st.session_state.pop("pending_delete_source_name", None)
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Không thể xóa nguồn: {exc}")
 
         with col_cancel:
             if st.button("Hủy", key="cancel_delete_source"):
-                st.session_state.pop("pending_delete_source", None)
+                st.session_state.pop("pending_delete_source_id", None)
+                st.session_state.pop("pending_delete_source_name", None)
                 st.rerun()
 
 
@@ -992,6 +1064,35 @@ def render_stats_page():
 
     with col3:
         st.metric("Tin nhắn trong phiên", len(st.session_state["messages"]))
+
+    try:
+        operational_metrics = get_operational_metrics()
+    except ValueError as exc:
+        operational_metrics = {}
+        st.error(str(exc))
+
+    st.markdown("---")
+    st.markdown("### 📈 Chỉ số vận hành")
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    with metric_col1:
+        st.metric(
+            "Câu hỏi đã xử lý",
+            operational_metrics.get("questions", 0),
+        )
+    with metric_col2:
+        st.metric(
+            "Số lượt chuyển nhân viên",
+            operational_metrics.get("handoffs", 0),
+        )
+    with metric_col3:
+        st.metric(
+            "Tỷ lệ chuyển tiếp",
+            f"{operational_metrics.get('handoff_rate', 0.0):.1%}",
+        )
+    st.caption(
+        "Các chỉ số này là số liệu vận hành, không thay thế đánh giá accuracy "
+        "trên bộ câu hỏi có đáp án chuẩn."
+    )
 
     st.markdown("---")
     st.markdown("### 📦 Thông tin kho dữ liệu")
@@ -1037,6 +1138,42 @@ def render_stats_page():
         st.info("Chưa có nguồn tài liệu được lập chỉ mục.")
 
 
+def render_handoff_page():
+    render_header(
+        "Hàng đợi nhân viên",
+        "Các câu hỏi có độ tin cậy thấp được lưu lại để nhân viên kiểm tra "
+        "và phản hồi.",
+    )
+    requests_data = list_handoff_requests()
+    if not requests_data:
+        st.info("Chưa có yêu cầu nào cần nhân viên tiếp nhận.")
+        return
+
+    st.metric(
+        "Yêu cầu đang chờ",
+        sum(item.get("status") == "pending" for item in requests_data),
+    )
+    for item in reversed(requests_data):
+        with st.container(border=True):
+            st.markdown(
+                f"**{item.get('id', 'Không có mã')}** · "
+                f"{item.get('created_at', 'Không rõ thời gian')}"
+            )
+            st.markdown(f"**Câu hỏi:** {item.get('question', '')}")
+            st.markdown(f"**Lý do chuyển:** {item.get('reason', '')}")
+            st.markdown(f"**Câu trả lời tự động:** {item.get('answer', '')}")
+            sources = item.get("sources") or []
+            if sources:
+                st.caption(
+                    "Nguồn đã truy xuất: "
+                    + ", ".join(
+                        f"{source.get('source', 'không rõ')} "
+                        f"(trang {source.get('page', '?')})"
+                        for source in sources
+                    )
+                )
+
+
 # ============================================================
 # 9. ĐIỀU PHỐI TRANG
 # ============================================================
@@ -1051,6 +1188,9 @@ elif page == "Kho tài liệu":
 
 elif page == "Thống kê":
     render_stats_page()
+
+elif page == "Hàng đợi nhân viên":
+    render_handoff_page()
 
 else:
     st.session_state["current_page"] = "Chat"

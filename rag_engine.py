@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,10 +18,21 @@ import requests
 ROOT = Path(__file__).resolve().parent
 CHROMA_DIR = ROOT / "data" / "chroma"
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = ROOT / "data"
+HANDOFF_FILE = DATA_DIR / "handoff_requests.json"
+METRICS_FILE = DATA_DIR / "metrics.json"
 
 COLLECTION_NAME = "company_policy"
 DEFAULT_EMBEDDING_MODEL = os.getenv(
-    "EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    "EMBEDDING_MODEL",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+)
+
+EMBEDDING_MODEL_PATH = Path(
+    os.getenv(
+        "EMBEDDING_MODEL_PATH",
+        str(ROOT / "embedding_model"),
+    )
 )
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 
@@ -42,11 +55,33 @@ def get_collection():
     return _collection
 
 
+
 def get_embedder():
     global _embedder
+
     if _embedder is None:
-        _embedder = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+        model_path = EMBEDDING_MODEL_PATH
+
+        if not model_path.is_dir():
+            raise FileNotFoundError(
+                f"Không tìm thấy thư mục embedding model: {model_path}"
+            )
+
+        if not (model_path / "modules.json").is_file():
+            raise FileNotFoundError(
+                f"Không tìm thấy modules.json trong: {model_path}. "
+                "Hãy kiểm tra model đã tải đầy đủ chưa."
+            )
+
+        _embedder = SentenceTransformer(
+            str(model_path),
+            local_files_only=True,
+        )
+
+        print(f"[RAG] Đã tải embedding model từ: {model_path}")
+
     return _embedder
+
 
 
 def normalize_text(text: str) -> str:
@@ -298,6 +333,148 @@ def generate_answer(
             f"done_reason={reason}). Hãy thử model khác hoặc kiểm tra cấu hình chế độ suy luận của model."
         )
     return content, data
+
+
+def should_handoff(
+    hits: list[dict[str, Any]],
+    answer_metadata: dict[str, Any],
+    min_similarity: float = 0.45,
+) -> tuple[bool, str]:
+    """Decide whether a question needs human review."""
+    if not hits:
+        return True, "Không tìm thấy đoạn tài liệu phù hợp."
+
+    best_similarity = max(
+        (float(hit.get("similarity", 0.0)) for hit in hits),
+        default=0.0,
+    )
+    if best_similarity < min_similarity:
+        return (
+            True,
+            f"Độ tương đồng cao nhất ({best_similarity:.2f}) thấp hơn "
+            f"ngưỡng an toàn ({min_similarity:.2f}).",
+        )
+    if answer_metadata.get("no_context"):
+        return True, "Mô hình không có đủ ngữ cảnh để trả lời."
+    return False, ""
+
+
+def create_handoff_request(
+    question: str,
+    answer: str,
+    reason: str,
+    hits: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persist a human-review request and return the stored record."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    requests_data: list[dict[str, Any]] = []
+    if HANDOFF_FILE.exists():
+        try:
+            loaded = json.loads(HANDOFF_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                requests_data = loaded
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Không đọc được hàng đợi chuyển nhân viên: {HANDOFF_FILE}"
+            ) from exc
+
+    record = {
+        "id": hashlib.sha256(
+            f"{question}:{datetime.now(timezone.utc).isoformat()}".encode("utf-8")
+        ).hexdigest()[:16],
+        "question": question,
+        "answer": answer,
+        "reason": reason,
+        "sources": [
+            {
+                "source": hit.get("source"),
+                "page": hit.get("page"),
+                "similarity": hit.get("similarity"),
+            }
+            for hit in hits
+        ],
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    requests_data.append(record)
+    HANDOFF_FILE.write_text(
+        json.dumps(requests_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return record
+
+
+def list_handoff_requests() -> list[dict[str, Any]]:
+    if not HANDOFF_FILE.exists():
+        return []
+    try:
+        loaded = json.loads(HANDOFF_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Không đọc được hàng đợi chuyển nhân viên: {HANDOFF_FILE}"
+        ) from exc
+    return loaded if isinstance(loaded, list) else []
+
+
+def record_interaction(
+    *,
+    handoff_required: bool,
+    best_similarity: float,
+) -> None:
+    """Persist aggregate operational metrics for the evaluation dashboard."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    metrics = {
+        "questions": 0,
+        "handoffs": 0,
+        "similarity_sum": 0.0,
+    }
+    if METRICS_FILE.exists():
+        try:
+            loaded = json.loads(METRICS_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                metrics.update(loaded)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Không đọc được số liệu vận hành: {METRICS_FILE}"
+            ) from exc
+
+    metrics["questions"] = int(metrics["questions"]) + 1
+    metrics["handoffs"] = int(metrics["handoffs"]) + int(handoff_required)
+    metrics["similarity_sum"] = float(metrics["similarity_sum"]) + float(
+        best_similarity
+    )
+    METRICS_FILE.write_text(
+        json.dumps(metrics, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def get_operational_metrics() -> dict[str, Any]:
+    metrics = {
+        "questions": 0,
+        "handoffs": 0,
+        "similarity_sum": 0.0,
+    }
+    if METRICS_FILE.exists():
+        try:
+            loaded = json.loads(METRICS_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                metrics.update(loaded)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Không đọc được số liệu vận hành: {METRICS_FILE}"
+            ) from exc
+    questions = int(metrics["questions"])
+    return {
+        "questions": questions,
+        "handoffs": int(metrics["handoffs"]),
+        "handoff_rate": (
+            int(metrics["handoffs"]) / questions if questions else 0.0
+        ),
+        "average_similarity": (
+            float(metrics["similarity_sum"]) / questions if questions else 0.0
+        ),
+    }
 
 
 def get_collection_stats() -> dict[str, int]:
