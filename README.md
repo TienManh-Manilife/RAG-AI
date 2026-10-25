@@ -1,10 +1,11 @@
-# Dịch vụ AI chăm sóc khách hàng dựa trên RAG
+# TRỢ LÝ AI CHĂM SÓC KHÁCH HÀNG DỰA TRÊN RAG
 
 ## Thành viên
+
 ```
-    Nguyễn Hải Phong   - 21020085  
-    Trần Anh Dũng       - 24020096  
-    Nguyễn Tiến Mạnh    - 24020220  
+    Nguyễn Hải Phong   - 21020085
+    Trần Anh Dũng       - 24020096
+    Nguyễn Tiến Mạnh    - 24020220
 ```
 
 ## Mô tả
