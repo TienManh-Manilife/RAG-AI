@@ -264,6 +264,26 @@ def retrieve_context(query: str, top_k: int = 5, min_similarity: float = 0.25) -
     return hits
 
 
+def clean_model_answer(content: str) -> str:
+    """Remove model reasoning markers before exposing the answer to users."""
+    content = content.strip()
+    if not content:
+        return ""
+
+    closing_think = re.search(r"</think\s*>", content, flags=re.IGNORECASE)
+    if closing_think:
+        content = content[closing_think.end():]
+    else:
+        content = re.sub(
+            r"<think\b[^>]*>.*?</think\s*>",
+            "",
+            content,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    return content.strip()
+
+
 def generate_answer(
     query: str,
     hits: list[dict[str, Any]],
@@ -288,7 +308,10 @@ def generate_answer(
     context = "\n\n---\n\n".join(context_blocks)
 
     system = (
-        "Bạn là trợ lý hỏi đáp quy định công ty. Trả lời bằng tiếng Việt. "
+        "Bạn là trợ lý hỏi đáp quy định công ty dành cho người dùng Việt Nam. "
+        "BẮT BUỘC trả lời hoàn toàn bằng tiếng Việt. "
+        "Không được trả lời bằng tiếng Anh hoặc ngôn ngữ khác, kể cả khi câu hỏi "
+        "hoặc tài liệu nguồn bằng tiếng Anh. "
         "Chỉ sử dụng thông tin trong NGỮ CẢNH TÀI LIỆU được cung cấp. "
         "Nếu tài liệu không đủ căn cứ, hãy nói rõ chưa tìm thấy thông tin trong tài liệu và đề nghị liên hệ bộ phận phụ trách. "
         "Không tự bịa chính sách, mức tiền, thời hạn hoặc quyền lợi. "
@@ -324,7 +347,7 @@ def generate_answer(
     response.raise_for_status()
     data = response.json()
     message = data.get("message") or {}
-    content = (message.get("content") or "").strip()
+    content = clean_model_answer(message.get("content") or "")
     if not content:
         # Do not expose the model's internal thinking field to end users.
         reason = data.get("done_reason", "unknown")
