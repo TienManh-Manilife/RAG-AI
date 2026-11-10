@@ -10,7 +10,7 @@ cầu chuyển cho nhân viên thay vì cố gắng suy đoán.
 
 ```text
 PDF -> pypdf -> chunking có overlap -> multilingual embedding
-    -> ChromaDB persistent -> cosine retrieval -> Ollama LLM
+    -> ChromaDB persistent -> dense + lexical reranking/MMR -> Ollama LLM
     -> câu trả lời có trích dẫn / hàng đợi nhân viên
 ```
 
@@ -33,9 +33,12 @@ trước khi tải lên.
 - Tải một hoặc nhiều PDF, chuẩn hóa và chia chunk theo ranh giới đoạn/câu.
 - Tạo embedding tiếng Việt bằng Sentence-Transformers.
 - Lưu index bền vững bằng ChromaDB trong `data/chroma`.
+- Truy xuất một pool ứng viên bằng cosine, sau đó kết hợp lexical matching và
+  MMR để giảm đoạn trùng lặp, tăng độ phủ ngữ cảnh.
 - Trả lời bằng Ollama với prompt chỉ cho phép dùng context được truy xuất.
 - Hiển thị tên tài liệu, số trang và nội dung các đoạn nguồn.
-- Dedupe và cập nhật idempotent khi nạp lại cùng nội dung tài liệu.
+- Dedupe và cập nhật idempotent theo tên file; nạp lại bản PDF mới sẽ loại bỏ
+  các chunk cũ của cùng tài liệu.
 - Xóa đúng nguồn bằng `source_id`.
 - Chuyển tiếp khi không có context hoặc similarity cao nhất thấp hơn ngưỡng.
 - Lưu yêu cầu chuyển tiếp tại `data/handoff_requests.json`.
