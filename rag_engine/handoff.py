@@ -6,23 +6,35 @@ from typing import Any
 from .config import DATA_DIR, HANDOFF_FILE
 
 def should_handoff(
-    hits: list[dict[str, Any]], answer_metadata: dict[str, Any],
+    hits: list[dict[str, Any]],
+    answer_metadata: dict[str, Any],
     min_similarity: float = 0.45,
-) -> tuple[bool, str]:
-    if not hits:
-        return True, "Không tìm thấy đoạn tài liệu phù hợp."
+) -> tuple[bool, str, float]:
+
     best_similarity = max(
-        (float(hit.get("similarity", 0.0)) for hit in hits), default=0.0
+        (float(hit.get("similarity", 0.0)) for hit in hits),
+        default=0.0,
     )
+
+    if not hits:
+        return True, "Không tìm thấy đoạn tài liệu phù hợp.", best_similarity
+
     if best_similarity < min_similarity:
         return (
             True,
-            f"Độ tương đồng cao nhất ({best_similarity:.2f}) thấp hơn "
+            f"Độ tương đồng cao nhất ({best_similarity:.4f}) thấp hơn "
             f"ngưỡng an toàn ({min_similarity:.2f}).",
+            best_similarity,
         )
+
     if answer_metadata.get("no_context"):
-        return True, "Mô hình không có đủ ngữ cảnh để trả lời."
-    return False, ""
+        return (
+            True,
+            "Mô hình không có đủ ngữ cảnh để trả lời.",
+            best_similarity,
+        )
+
+    return False, "", best_similarity
 
 def create_handoff_request(
     question: str, answer: str, reason: str, hits: list[dict[str, Any]]

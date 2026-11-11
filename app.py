@@ -725,10 +725,14 @@ def render_chat_page():
                         temperature=float(st.session_state["temperature"]),
                         num_ctx=int(st.session_state["num_ctx"]),
                     )
-                    handoff_required, handoff_reason = should_handoff(
+                    handoff_required, handoff_reason, similarity = should_handoff(
                         hits,
                         generation_metadata,
                         min_similarity=float(st.session_state["min_similarity"]),
+                    )
+                    st.metric(
+                        label="Độ tương đồng cao nhất",
+                        value=f"{similarity:.2%}",
                     )
                     best_similarity = max(
                         (float(hit.get("similarity", 0.0)) for hit in hits),
