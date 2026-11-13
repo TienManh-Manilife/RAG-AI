@@ -5,17 +5,50 @@ from typing import Any
 from .config import OLLAMA_BASE_URL
 
 def clean_model_answer(content: str) -> str:
-    content = content.strip()
+    """Return only the final answer, never the model's hidden reasoning."""
+    content = str(content or "").strip()
     if not content:
         return ""
+
+    opening_think = re.search(r"<think\b[^>]*>", content, flags=re.IGNORECASE)
     closing_think = re.search(r"</think\s*>", content, flags=re.IGNORECASE)
     if closing_think:
+        # A reasoning block can start with or without an opening tag.
         content = content[closing_think.end():]
-    else:
-        content = re.sub(
-            r"<think\b[^>]*>.*?</think\s*>", "", content,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
+    elif opening_think:
+        # Truncated responses sometimes contain an opening tag only. Do not
+        # expose the unfinished reasoning as if it were the final answer.
+        content = content[:opening_think.start()]
+
+    # Qwen/compatible models can ignore the think flag and emit a prose
+    # reasoning preamble directly in `message.content`. Prefer an explicit
+    # final-answer section when one exists.
+    final_marker = re.search(
+        r"(?im)^\s*(?:final(?:\s+answer)?|câu trả lời(?: cuối cùng)?|"
+        r"trả lời|so the main points)\s*:\s*",
+        content,
+    )
+    if final_marker:
+        content = content[final_marker.end():]
+    elif re.match(
+        r"(?is)^\s*(?:okay,?\s+let['’]s|let['’]s|first,?\s+i['’]ll|"
+        r"looking at|the user is asking|i need to|i should|"
+        r"thinking\s*:|reasoning\s*:)",
+        content,
+    ):
+        # There is no trustworthy final section to expose.
+        return ""
+
+    # Some Ollama-compatible models emit a plain reasoning prefix instead of
+    # XML tags. Only remove it when a clear final-answer separator follows.
+    content = re.sub(
+        r"^\s*(?:thinking|reasoning)\s*:\s*.*?(?:\n\s*(?:answer|final)\s*:\s*)",
+        "",
+        content,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
     return content.strip()
 
 def generate_answer(
@@ -74,7 +107,7 @@ def generate_answer(
         "options": {
             "temperature": float(temperature),
             "num_ctx": int(num_ctx),
-            "num_predict": 800,
+            "num_predict": 1200,
         },
     }
     response = requests.post(
@@ -83,11 +116,15 @@ def generate_answer(
     response.raise_for_status()
     data = response.json()
     message = data.get("message") or {}
+    # Ollama may return reasoning in a separate `thinking` field. Never use
+    # that field as a user-facing fallback; only `content` is an answer.
     content = clean_model_answer(message.get("content") or "")
     if not content:
+        data["answer_filtered"] = True
         reason = data.get("done_reason", "unknown")
         content = (
-            "Model Ollama chưa trả về câu trả lời cuối cùng (trường content rỗng; "
-            f"done_reason={reason}). Hãy thử model khác hoặc kiểm tra cấu hình chế độ suy luận của model."
+            "Model Ollama đã trả về phần suy luận nhưng không có câu trả lời "
+            "cuối cùng hợp lệ (done_reason="
+            f"{reason}). Hãy thử gửi lại câu hỏi hoặc dùng model hỗ trợ tắt thinking."
         )
     return content, data

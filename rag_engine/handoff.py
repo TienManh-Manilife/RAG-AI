@@ -34,6 +34,13 @@ def should_handoff(
             best_similarity,
         )
 
+    if answer_metadata.get("answer_filtered"):
+        return (
+            True,
+            "Mô hình chỉ trả về phần suy luận, chưa có câu trả lời cuối cùng.",
+            best_similarity,
+        )
+
     return False, "", best_similarity
 
 def create_handoff_request(

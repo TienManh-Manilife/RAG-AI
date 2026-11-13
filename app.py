@@ -11,6 +11,7 @@ from rag_engine import (
     DEFAULT_EMBEDDING_MODEL,
     OLLAMA_BASE_URL,
     create_handoff_request,
+    clean_model_answer,
     delete_source,
     generate_answer,
     get_collection_stats,
@@ -295,8 +296,8 @@ def initialize_state():
         "num_ctx": 4096,
         "top_k": 5,
         "min_similarity": 0.45,
-        "chunk_size": 800,
-        "overlap": 120,
+        "chunk_size": 200,
+        "overlap": 60,
     }
 
     for key, value in defaults.items():
@@ -677,6 +678,8 @@ def render_chat_page():
     for message in st.session_state["messages"]:
         role = message.get("role", "assistant")
         content = message.get("content", "")
+        if role == "assistant":
+            content = clean_model_answer(content)
 
         # Không dùng avatar tùy chỉnh để tránh lỗi đường dẫn avatar.
         with st.chat_message(role):
