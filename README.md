@@ -1,5 +1,11 @@
 # TRỢ LÝ AI CHĂM SÓC KHÁCH HÀNG DỰA TRÊN RAG
 
+## Demo
+
+```
+https://rag-ai-demo.streamlit.app/
+```
+
 ## Mục tiêu
 
 Chatbot trả lời câu hỏi từ tài liệu PDF thực tế bằng Retrieval-Augmented

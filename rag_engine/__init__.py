@@ -10,6 +10,7 @@ from .config import (
     DEFAULT_EMBEDDING_MODEL,
     EMBEDDING_MODEL_PATH,
     OLLAMA_BASE_URL,
+    get_ai_server_config,
 )
 
 from .text_processing import normalize_text, chunk_text, extract_pdf_pages
@@ -40,4 +41,5 @@ __all__ += [
     "DEFAULT_EMBEDDING_MODEL",
     "EMBEDDING_MODEL_PATH",
     "OLLAMA_BASE_URL",
+    "get_ai_server_config",
 ]
