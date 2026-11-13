@@ -41,5 +41,6 @@ __all__ += [
     "DEFAULT_EMBEDDING_MODEL",
     "EMBEDDING_MODEL_PATH",
     "OLLAMA_BASE_URL",
-    "get_ai_server_config",
 ]
+
+__all__ += ["get_ai_server_config"]
