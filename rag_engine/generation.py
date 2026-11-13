@@ -2,7 +2,7 @@
 import re
 import requests
 from typing import Any
-from .config import OLLAMA_BASE_URL
+from .config import get_ai_server_config
 
 def clean_model_answer(content: str) -> str:
     """Return only the final answer, never the model's hidden reasoning."""
@@ -110,21 +110,58 @@ def generate_answer(
             "num_predict": 1200,
         },
     }
-    response = requests.post(
-        f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=(5, 240)
-    )
-    response.raise_for_status()
-    data = response.json()
-    message = data.get("message") or {}
-    # Ollama may return reasoning in a separate `thinking` field. Never use
-    # that field as a user-facing fallback; only `content` is an answer.
-    content = clean_model_answer(message.get("content") or "")
+    server = get_ai_server_config()
+    if not server["base_url"]:
+        raise RuntimeError(
+            "Chưa cấu hình AI Server URL. Hãy thêm [ai_server].base_url "
+            "trong Streamlit Secrets."
+        )
+    if not server["api_key"]:
+        raise RuntimeError(
+            "Chưa cấu hình AI Server API key. Hãy thêm [ai_server].api_key "
+            "trong Streamlit Secrets."
+        )
+
+    try:
+        response = requests.post(
+            f"{server['base_url']}/v1/chat",
+            headers={"Authorization": f"Bearer {server['api_key']}"},
+            json={
+                "messages": payload["messages"],
+                "temperature": float(temperature),
+            },
+            timeout=(10, 240),
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.Timeout as exc:
+        raise RuntimeError(
+            "AI Server phản hồi quá thời gian chờ. Kiểm tra máy chủ và Ollama."
+        ) from exc
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else "unknown"
+        detail = ""
+        if exc.response is not None:
+            try:
+                detail = exc.response.json().get("detail", "")
+            except ValueError:
+                detail = exc.response.text[:500]
+        raise RuntimeError(
+            f"AI Server trả về HTTP {status_code}. {detail}".strip()
+        ) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Không kết nối được AI Server: {exc}"
+        ) from exc
+
+    # The FastAPI gateway returns {"model": ..., "answer": ...}.
+    content = clean_model_answer(data.get("answer") or "")
     if not content:
         data["answer_filtered"] = True
-        reason = data.get("done_reason", "unknown")
         content = (
-            "Model Ollama đã trả về phần suy luận nhưng không có câu trả lời "
-            "cuối cùng hợp lệ (done_reason="
-            f"{reason}). Hãy thử gửi lại câu hỏi hoặc dùng model hỗ trợ tắt thinking."
+            "AI Server đã phản hồi nhưng không có nội dung câu trả lời hợp lệ. "
+            "Hãy thử gửi lại câu hỏi."
         )
+        data["answer_filtered"] = True
+    data.setdefault("model", server["model"])
     return content, data

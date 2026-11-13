@@ -9,7 +9,7 @@ import streamlit as st
 
 from rag_engine import (
     DEFAULT_EMBEDDING_MODEL,
-    OLLAMA_BASE_URL,
+    get_ai_server_config,
     create_handoff_request,
     clean_model_answer,
     delete_source,
@@ -33,8 +33,9 @@ ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "data" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-OLLAMA_URL = OLLAMA_BASE_URL
-DEFAULT_MODEL = "qwen3:4b"
+AI_SERVER_CONFIG = get_ai_server_config()
+AI_SERVER_URL = AI_SERVER_CONFIG["base_url"]
+DEFAULT_MODEL = AI_SERVER_CONFIG["model"] or "qwen3:4b"
 
 st.set_page_config(
     page_title="RAG-AI | Trợ lý tri thức",
@@ -310,19 +311,19 @@ def set_page(page_name):
     st.session_state["current_page"] = page_name
 
 
-def check_ollama():
+def check_ai_server():
     try:
+        if not AI_SERVER_URL:
+            return False, []
         response = requests.get(
-            f"{OLLAMA_URL}/api/tags",
-            timeout=3,
+            f"{AI_SERVER_URL}/health",
+            timeout=10,
         )
         response.raise_for_status()
         data = response.json()
-        models = [
-            item.get("name", "")
-            for item in data.get("models", [])
-        ]
-        return True, models
+        if data.get("status") != "online":
+            return False, []
+        return True, [DEFAULT_MODEL]
     except (requests.RequestException, ValueError):
         return False, []
 
@@ -543,10 +544,11 @@ with st.sidebar:
 
     st.markdown("### ⚙️ Cấu hình mô hình")
 
-    model = st.text_input(
-        "Tên model Ollama",
-        key="model",
-        help="Ví dụ: qwen3:4b. Model phải được cài trên Ollama.",
+    st.text_input(
+        "Model AI Server",
+        value=DEFAULT_MODEL,
+        disabled=True,
+        help="Model được cấu hình cố định trên máy chủ FastAPI.",
     )
 
     temperature = st.slider(
@@ -583,27 +585,27 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### 🖥️ Trạng thái Ollama")
+    st.markdown("### 🖥️ Trạng thái AI Server")
 
-    ollama_ok, installed_models = check_ollama()
+    ai_server_ok, installed_models = check_ai_server()
 
-    if ollama_ok:
+    if ai_server_ok:
         st.markdown(
-            '<span class="status-pill">● Ollama đang hoạt động</span>',
+            '<span class="status-pill">● AI Server đang hoạt động</span>',
             unsafe_allow_html=True,
         )
 
         if installed_models:
-            st.caption("Model đã cài:")
+            st.caption("Model cấu hình trên máy chủ:")
             for installed_model in installed_models[:8]:
                 st.caption(f"• {installed_model}")
         else:
             st.caption("Chưa tìm thấy model nào đã cài.")
     else:
-        st.error("Không kết nối được Ollama.")
+        st.error("Không kết nối được AI Server.")
         st.caption(
-            "Kiểm tra Ollama đã chạy tại "
-            "http://127.0.0.1:11434 hay chưa."
+            "Kiểm tra AI Server URL và trạng thái Cloudflare Tunnel "
+            "trong Streamlit Secrets."
         )
 
     st.divider()
@@ -668,8 +670,8 @@ def render_chat_page():
 
     with col3:
         st.metric(
-            "Trạng thái mô hình",
-            "Sẵn sàng" if ollama_ok else "Ngoại tuyến",
+            "Kết nối AI Server",
+            "Gateway online" if ai_server_ok else "Ngoại tuyến",
         )
 
     st.markdown("---")
@@ -694,10 +696,10 @@ def render_chat_page():
     )
 
     if prompt:
-        if not ollama_ok:
+        if not ai_server_ok:
             st.error(
-                "Không kết nối được Ollama. Hãy khởi động Ollama "
-                "trước khi gửi câu hỏi."
+                "Không kết nối được AI Server. Hãy kiểm tra máy chủ "
+                "và Cloudflare Tunnel trước khi gửi câu hỏi."
             )
             return
 
@@ -790,8 +792,8 @@ def render_chat_page():
             except Exception as exc:
                 error_message = (
                     f"Đã xảy ra lỗi khi xử lý câu hỏi: {exc}\n\n"
-                    "Hãy kiểm tra Ollama, model và cấu hình trong "
-                    "`rag_engine.py`."
+                    "Hãy kiểm tra AI Server, Cloudflare Tunnel "
+                    "và Streamlit Secrets."
                 )
                 response_placeholder.error(error_message)
 
@@ -1042,7 +1044,7 @@ def render_stats_page():
         "Theo dõi tình trạng kết nối mô hình và thông tin kho tài liệu.",
     )
 
-    ollama_connected, models = check_ollama()
+    ai_server_connected, models = check_ai_server()
 
     try:
         stats = get_collection_stats()
@@ -1065,8 +1067,8 @@ def render_stats_page():
 
     with col2:
         st.metric(
-            "Model Ollama",
-            "Đang kết nối" if ollama_connected else "Ngoại tuyến",
+            "AI Gateway",
+            "Online" if ai_server_connected else "Offline",
         )
 
     with col3:
@@ -1115,12 +1117,12 @@ def render_stats_page():
         st.info("Chưa có thông tin thống kê được trả về.")
 
     st.markdown("---")
-    st.markdown("### 🖥️ Ollama")
+    st.markdown("### 🖥️ AI Gateway")
 
-    if ollama_connected:
-        st.success(f"Kết nối thành công: {OLLAMA_URL}")
+    if ai_server_connected:
+        st.success(f"Kết nối thành công: {AI_SERVER_URL}")
     else:
-        st.error(f"Không kết nối được: {OLLAMA_URL}")
+        st.error(f"Không kết nối được: {AI_SERVER_URL}")
 
     st.markdown("**Model đã cài**")
 
@@ -1133,7 +1135,7 @@ def render_stats_page():
             )
             st.write(f"• {model_name}{selected}")
     else:
-        st.info("Không tìm thấy model hoặc Ollama chưa hoạt động.")
+        st.info("Không tìm thấy model hoặc AI Server chưa hoạt động.")
 
     st.markdown("---")
     st.markdown("### 📚 Danh sách nguồn")
@@ -1217,7 +1219,7 @@ st.markdown(
         font-size: 0.82rem;
         padding: 0.4rem 0 1rem 0;
     ">
-        RAG-AI · Hỏi đáp dựa trên tài liệu · Powered by Ollama
+        RAG-AI · Hỏi đáp dựa trên tài liệu · Powered by AI Server
     </div>
     """,
     unsafe_allow_html=True,
