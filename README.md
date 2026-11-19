@@ -1,89 +1,152 @@
-# TRỢ LÝ AI CHĂM SÓC KHÁCH HÀNG DỰA TRÊN RAG
+# ✦ RAG–AI Enterprise — Hỏi đáp tài liệu có hỗ trợ nhân viên
 
-## Demo
+**Mục tiêu đồ án:** chatbot dùng dữ liệu quy chế đào tạo / chính sách bảo hành thực tế, chuyển nhân viên khi thiếu căn cứ; đo chất lượng tra cứu, tỷ lệ chuyển tiếp và phân tích Human-in-the-loop.
 
-```
-https://rag-ai-demo.streamlit.app/
-```
+## 1. Tính năng
 
-## Mục tiêu
+- Đăng ký, đăng nhập cổng người dùng/nhân viên; quản trị viên được bootstrap bằng secret khi **CSDL hoàn toàn trống**.
+- Password PBKDF2-HMAC-SHA256 (600.000 vòng + salt), khóa tài khoản 15 phút sau 5 lần đăng nhập sai; role `user`, `staff`, `admin`.
+- Nhân viên chỉ đăng ký bằng **mã mời bí mật** (tối thiểu 12 ký tự), hoặc do admin tạo. Người dùng không truy cập trang quản trị/kho chung/hàng đợi.
+- RAG chế độ **Kho hệ thống** (ChromaDB, nhân viên quản lý) và **Tài liệu riêng** (PDF/DOCX/TXT; vector embedding trong session, không ghi vào Chroma chung).
+- Chat có lịch sử riêng theo tài khoản, hỗ trợ truy vấn tiếp nối ngữ cảnh, phản hồi hữu ích/chưa đúng, nguồn tham khảo theo trang.
+- Đề xuất chuyển tiếp dựa trên điểm bằng chứng, tình trạng thiếu căn cứ, lời từ chối và trích dẫn; người dùng có thể chuyển bất cứ câu trả lời nào.
+- Nhân viên nhận xử lý, phản hồi, đóng phiếu; quản trị được mở lại.
+- Dashboard hiển thị tổng số câu hỏi, số đề xuất chuyển, số chuyển thật, tỷ lệ, thời gian xử lý và phản hồi người dùng.
+- Bộ đánh giá CSV: exact match, token F1, Retrieval Recall@5 (nếu có `expected_source`), citation rate, precision/recall chuyển tiếp (nếu có nhãn), gợi ý ngưỡng trên tập đánh giá và thẩm định thủ công từng câu bởi chuyên gia.
 
-Chatbot trả lời câu hỏi từ tài liệu PDF thực tế bằng Retrieval-Augmented
-Generation (RAG). Khi không tìm được căn cứ đủ chắc chắn, hệ thống tạo yêu
-cầu chuyển cho nhân viên thay vì cố gắng suy đoán.
-
-## Kiến trúc
+## 2. Cấu trúc
 
 ```text
-PDF -> pypdf -> chunking có overlap -> multilingual embedding
-    -> ChromaDB persistent -> dense + lexical reranking/MMR -> Ollama LLM
-    -> câu trả lời có trích dẫn / hàng đợi nhân viên
+app.py                       # UI Streamlit
+rag_engine/
+  auth.py                    # SQLite users / password / roles
+  service.py                 # Conversations, queue, events, feedback
+  config.py                  # Cấu hình & secrets
+  retrieval.py               # Dense candidate retrieval + lexical rerank + MMR
+  private_docs.py            # Tài liệu riêng của session
+  embeddings.py              # SentenceTransformer
+  database.py                # ChromaDB persistent store
+  ingestion.py               # Nạp PDF kho chung
+  sources.py                 # Quản lý nguồn hệ thống
+  generation.py              # Prompt grounded + AI gateway
+  handoff.py                 # Quy tắc đề xuất chuyển tiếp
+  evaluation.py              # Metric đánh giá tham chiếu
+  text_processing.py         # PDF extraction/chunking
+ai_server/server.py          # Gateway FastAPI cho Ollama (mới)
+requirements.txt
+requirements-server.txt
+.streamlit/secrets.toml.example
+.env.example
+evaluation/sample_questions.csv
 ```
 
-## Cài đặt và chạy
+## 3. Cài đặt (Windows PowerShell)
 
 ```powershell
+git clone <URL_REPO_CUA_BAN>
+cd RAG-AI
+py -3.11 -m venv venv
 .\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-ollama serve
+```
+
+- Nên dùng Python 3.11. Lần đầu chạy sẽ tải embedding model từ Hugging Face nếu thiếu `embedding_model/`.
+- Streamlit Cloud không chạy được model Ollama trên máy cá nhân nếu không có gateway công khai (ví dụ Cloudflare Tunnel).
+- PDF scan chỉ chứa ảnh không hỗ trợ OCR trong bản này; OCR trước khi nạp.
+
+### Chạy AI gateway trên máy cài Ollama
+
+```powershell
+pip install -r requirements-server.txt
 ollama pull qwen3:4b
+# Nếu Ollama chưa tự chạy: mở terminal khác rồi gõ: ollama serve
+$env:AI_SERVER_API_KEY = "YOUR_NEW_LONG_RANDOM_KEY_AT_LEAST_24_CHARS"
+$env:AI_SERVER_MODEL = "qwen3:4b"
+python -m uvicorn ai_server.server:app --host 127.0.0.1 --port 8000
+```
+
+Kiểm tra `http://127.0.0.1:8000/health`. Đặt `AI_SERVER_API_KEY` này giống khóa trong Streamlit Secrets. Nếu dùng Streamlit Cloud, đưa gateway ra HTTPS qua tunnel **và chỉ công bố gateway FastAPI, không công bố cổng Ollama**.
+
+### Cấu hình ứng dụng Streamlit
+
+```powershell
+Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
+```
+
+Sửa `.streamlit/secrets.toml` (không commit file này):
+
+```toml
+[ai_server]
+base_url = "http://127.0.0.1:8000" # Với Streamlit Cloud: URL HTTPS tunnel
+api_key = "SAME_LONG_KEY_AS_AI_SERVER_API_KEY"
+model = "qwen3:4b"
+
+[auth]
+bootstrap_admin_email = "admin@yourdomain.com"
+bootstrap_admin_password = "LONG_UNIQUE_ADMIN_PASSWORD"
+bootstrap_admin_name = "System Administrator"
+staff_invite_code = "SECRET_STAFF_INVITE_CODE_AT_LEAST_12_CHARS"
+```
+
+```powershell
 streamlit run app.py
 ```
 
-Mặc định Ollama chạy tại `http://127.0.0.1:11434`. Có thể đổi bằng biến môi
-trường `OLLAMA_BASE_URL`. Ứng dụng hỗ trợ PDF có text layer; PDF scan cần OCR
-trước khi tải lên.
+Mở `http://localhost:8501`.
 
-## Các chức năng đã triển khai
+**Cảnh báo khi triển khai Streamlit Cloud:** `data/` trên đĩa của Streamlit Cloud có thể bị **mất khi restart/redeploy**, không đảm bảo nhiều replica truy cập cùng SQLite/Chroma. Muốn triển khai thực tế và lưu dữ liệu bền vững, phải dùng PostgreSQL cho tài khoản/phiếu/chat và vector DB persistent (Chroma server/pgvector/Qdrant) thay cho SQLite/Chroma local. **Không đưa dữ liệu thật nhạy cảm lên cloud thử nghiệm** nếu chưa có quy trình bảo vệ và quyền truy cập phù hợp. Nếu sử dụng nhiều worker, cần rate-limit bằng shared store, xác thực phiên, CSRF/session hardening, email verification/reset password, logging kiểm toán và backup. Bản này hướng đến đồ án/demo có một instance, không phải hệ thống production đã qua kiểm toán bảo mật.
 
-- Tải một hoặc nhiều PDF, chuẩn hóa và chia chunk theo ranh giới đoạn/câu.
-- Tạo embedding tiếng Việt bằng Sentence-Transformers.
-- Lưu index bền vững bằng ChromaDB trong `data/chroma`.
-- Truy xuất một pool ứng viên bằng cosine, sau đó kết hợp lexical matching và
-  MMR để giảm đoạn trùng lặp, tăng độ phủ ngữ cảnh.
-- Trả lời bằng Ollama với prompt chỉ cho phép dùng context được truy xuất.
-- Hiển thị tên tài liệu, số trang và nội dung các đoạn nguồn.
-- Dedupe và cập nhật idempotent theo tên file; nạp lại bản PDF mới sẽ loại bỏ
-  các chunk cũ của cùng tài liệu.
-- Xóa đúng nguồn bằng `source_id`.
-- Chuyển tiếp khi không có context hoặc similarity cao nhất thấp hơn ngưỡng.
-- Lưu yêu cầu chuyển tiếp tại `data/handoff_requests.json`.
-- Ghi số liệu vận hành tại `data/metrics.json` và hiển thị tỷ lệ chuyển tiếp.
+## 4. Quy trình nghiệp vụ
 
-## Cơ chế chuyển nhân viên
+1. Admin đăng nhập qua cổng nhân viên bằng email/password bootstrap; nếu CSDL đã có tài khoản thì bootstrap admin không được chạy lại.
+2. Admin tạo nhân viên, hoặc nhân viên đăng ký bằng mã mời. Khách hàng tự đăng ký.
+3. Nhân viên mở **Kho tài liệu hệ thống** và nhập PDF thực tế; hệ thống lấy chữ, chia chunk và lập chỉ mục.
+4. Người dùng hỏi đáp theo **Kho hệ thống** hoặc nạp riêng PDF/DOCX/TXT rồi chuyển sang **Tài liệu tải lên**.
+5. Hệ thống truy xuất các đoạn gần nhất, rerank theo từ khóa, chọn nguồn đa dạng và gọi AI Gateway tạo câu trả lời có trích dẫn.
+6. Nếu câu trả lời không có căn cứ, nguồn yếu hoặc không có trích dẫn, hệ thống _đề xuất_ chuyển nhân viên. Người dùng nhấn **Chuyển nhân viên** để _thực sự tạo phiếu_.
+7. Nhân viên vào Hàng đợi, nhấn **Nhận xử lý** → nhập phản hồi → **Hoàn tất**. Người dùng đọc phản hồi ở lịch sử chat và **Yêu cầu của tôi**.
+8. Nhân viên xem **Báo cáo** hoặc **Đánh giá** để thu số liệu đồ án.
 
-Ngưỡng mặc định là `0.45`, có thể chỉnh trong sidebar. Một câu hỏi được đánh
-dấu cần nhân viên nếu không có hit, similarity cao nhất thấp hơn ngưỡng, hoặc
-LLM xác định không có đủ context. Người dùng có thể bấm **Chuyển câu hỏi cho
-nhân viên**; yêu cầu được lưu trong trang **Hàng đợi nhân viên**.
+## 5. Giải thích điểm tin cậy
 
-Đây là mô phỏng handoff phù hợp cho đồ án. Khi triển khai thật, hàm
-`create_handoff_request()` có thể được thay bằng API ticket, CRM, email hoặc
-webhook.
+**Không lấy cosine similarity làm xác suất đúng.** Giá trị cosine `0.45` hoàn toàn không có nghĩa câu trả lời đúng 45%. Chỉ số mới:
 
-## Đánh giá
+```text
+semantic_signal = clip((cosine - 0.20) / 0.45, 0, 1)
+evidence_index = 0.60 * semantic_signal + 0.40 * lexical_coverage
+```
 
-`evaluation/questions.json` là bộ khung để nhập câu hỏi, đáp án chuẩn, trang
-nguồn kỳ vọng và nhãn có cần handoff hay không. Cần đánh giá riêng:
+`lexical_coverage` là tỷ lệ từ khóa câu hỏi có mặt trong chunk (có thưởng cho chuỗi liên tục). Công thức là **heuristic công khai, chưa hiệu chỉnh**, dùng để xếp hạng và ra quyết định cần xem xét. Nếu không có kiểm định trên dữ liệu gắn nhãn thì **không được gọi 75% bằng chứng là 75% chính xác**. Mặc định đề xuất chuyển nếu evidence index dưới 0,45, câu trả lời thiếu trích dẫn hoặc nêu thiếu căn cứ. Để tối ưu ngưỡng theo lĩnh vực, tạo ít nhất 100–200 cặp câu hỏi có đáp án thực và câu hỏi cố ý ngoài tài liệu; tối ưu theo precision/recall của chuyển tiếp và mức rủi ro trả lời sai.
 
-- **Recall@K**: hit đúng xuất hiện trong K đoạn truy xuất.
-- **Answer correctness**: chấm thủ công 0 (sai), 1 (một phần), 2 (đúng).
-- **Citation accuracy**: câu trả lời trích đúng tài liệu/trang.
-- **Handoff rate**: số câu chuyển nhân viên / tổng số câu hỏi.
-- **Handoff precision/recall**: chất lượng quyết định chuyển tiếp.
+## 6. Đánh giá theo đề bài
 
-Số liệu trong trang Thống kê là số liệu vận hành thực tế, không được gọi là
-accuracy nếu chưa chạy trên bộ câu hỏi có đáp án và chấm độc lập.
+Tạo file CSV (UTF-8) theo mẫu `evaluation/sample_questions.csv` với cột bắt buộc `question,reference_answer` và tùy chọn `expected_source,should_handoff`. Vào tài khoản nhân viên > **Đánh giá RAG**, nạp CSV, chọn số mẫu, chạy. Sau đó mở phần **Thẩm định thủ công** để đánh dấu Đúng / Sai và tải CSV có nhãn chuyên gia. Công cụ có thể gợi ý ngưỡng phân luồng trên ít nhất 10 câu gắn nhãn đủ cả hai lớp; cần kiểm tra lại ngưỡng trên tập holdout độc lập.
 
-## Vai trò người–máy
+- Exact match / token F1: proxy về độ giống chữ, không thay thế đánh giá ngữ nghĩa.
+- Retrieval Recall@5: tỷ lệ câu hỏi có ít nhất một nguồn đúng trong top 5, nếu có nhãn nguồn.
+- Handoff precision/recall: đánh giá khả năng đề xuất chuyển tiếp dựa trên `should_handoff`.
+- Suggested handoff rate = số câu đề xuất chuyển / số câu hỏi; Actual handoff rate = số phiếu thật sự mở / số câu hỏi (có thể bị ảnh hưởng bởi hành vi khách hàng).
+- Dashboard feedback accuracy: tỷ lệ người dùng đánh giá hữu ích, chịu selection bias.
+- Nên thêm đánh giá thủ công: tính đúng sự kiện, đủ thông tin, chất lượng trích dẫn, nguy cơ trả lời không có căn cứ; báo cáo số lượng mẫu và khoảng tin cậy.
 
-Chatbot xử lý các câu hỏi lặp lại có căn cứ rõ trong tài liệu, giúp giảm tải
-nhân viên. Nhân viên xử lý ngoại lệ, câu hỏi liên quan quyền lợi cá nhân,
-trường hợp similarity thấp và chịu trách nhiệm cuối cùng đối với câu trả lời.
-Thiết kế này ưu tiên không bịa chính sách hơn là cố trả lời mọi câu hỏi.
+## 7. Giới hạn và lưu ý an toàn
 
-## Thành viên
+- Upload ở chế độ riêng được giữ trong RAM của **Streamlit session**, không làm nhiễm kho chung và không lưu nội dung PDF gốc xuống đĩa. Khi phiên kết thúc/restart, cần nạp lại; lịch sử câu hỏi/trả lời vẫn ở SQLite. Dữ liệu của chế độ riêng **vẫn được gửi tới AI Gateway** để tạo câu trả lời.
+- Trích dẫn kiểm tra bằng mẫu/nguồn (heuristic), **không phải** kiểm định entailment ngữ nghĩa. Mô hình có thể trích đúng nguồn nhưng diễn giải sai. Cần đánh giá chuyên gia trước khi dùng trong quyết định quyền lợi.
+- ChromaDB thực hiện dense candidate search rồi rerank từ khóa + MMR, **chưa phải** full-corpus sparse retrieval/BM25. Muốn mở rộng kho lớn nên thêm sparse index thực sự và cross-encoder reranker.
+- Việc xóa/tái lập chỉ mục chưa có transaction xuyên SQLite và Chroma. Không chạy đồng thời hai lần nạp cùng tài liệu.
+- Để nhập liệu có dấu/phức tạp, ưu tiên PDF dạng text; OCR là quy trình riêng.
+- Không nhúng khóa truy cập hoặc mật khẩu vào source code; thay khóa nếu nghi ngờ lộ.
 
-- Nguyễn Hải Phong - 21020085
-- Trần Anh Dũng - 24020096
-- Nguyễn Tiến Mạnh - 24020220
+## 8. Kiểm thử
+
+```powershell
+pip install pytest
+python -m pytest tests -q
+python -m compileall -q app.py rag_engine ai_server
+```
+
+Các unit test không cần mô hình Ollama, mạng, ChromaDB hay Streamlit. Phần chạy trực tiếp trên Streamlit và AI Gateway cần được kiểm tra tích hợp trong môi trường có đủ dependencies.
+
+**Nâng cấp dữ liệu từ phiên bản cũ:** Giữ `data/chroma/` cùng tên collection và cùng embedding model để tái sử dụng vector (nếu tương thích phiên bản Chroma). Không tự động nhập `handoff_requests.json`/`metrics.json` cũ vì bản JSON không có định danh người dùng đã xác thực; cần gắn chủ sở hữu hợp lệ trước khi import để tránh lộ thông tin giữa các tài khoản.

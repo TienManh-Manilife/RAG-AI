@@ -1,1226 +1,653 @@
-
-from pathlib import Path
+"""RAG-AI Enterprise service portal — Streamlit UI."""
+import csv
 import html
-import json
-import time
+import io
+from pathlib import Path
 
 import requests
 import streamlit as st
 
 from rag_engine import (
-    DEFAULT_EMBEDDING_MODEL,
-    get_ai_server_config,
-    create_handoff_request,
-    clean_model_answer,
-    delete_source,
-    generate_answer,
-    get_collection_stats,
-    get_operational_metrics,
-    ingest_pdf_bytes,
-    list_handoff_requests,
-    list_indexed_sources,
-    record_interaction,
-    retrieve_context,
-    should_handoff,
+    init_db, login, create_account, get_user, change_password, get_auth_config, get_ai_server_config,
+    require_role, new_conversation, get_conversation, list_conversations,
+    list_messages, add_message, log_event, submit_feedback, feedback_for_message,
+    request_handoff, get_handoff_for_message, list_handoffs, update_handoff, metrics,
+    should_handoff, generate_answer, retrieve_context, index_upload, retrieve_uploaded,
+    ingest_pdf_bytes, get_collection_stats, list_indexed_sources, delete_source,
+    evaluate_rows, bool_value, suggest_evidence_threshold,
 )
+from rag_engine.followup import contextualize_query
+
+st.set_page_config(page_title='RAG-AI | Cổng tri thức & dịch vụ', page_icon='✦',
+                   layout='wide', initial_sidebar_state='expanded')
+
+# CSS intentionally contains no interpolation of user-controlled HTML.
+st.markdown('''
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@500;600;700;800&display=swap');
+:root {--ink:#18233d;--muted:#67768d;--indigo:#5149bc;--mint:#0f807d;--line:#e2e9f2}
+html,body,[class*="css"] {font-family:'Inter',sans-serif;}
+.stApp {background:radial-gradient(ellipse 50% 35% at 90% 0%,#ede8ff 0%,transparent 90%),
+  radial-gradient(ellipse 55% 22% at 0% 15%,#def8f6 0%,transparent 90%),#f7f9fd;color:var(--ink);}
+[data-testid="stSidebar"] {background:linear-gradient(165deg,#ffffff 0%,#f4f7ff 100%);border-right:1px solid var(--line);}
+[data-testid="stHeader"] {background:transparent;}
+.block-container {padding-top:2.4rem;padding-bottom:2.4rem;max-width:1370px}
+h1,h2,h3 {font-family:Manrope,sans-serif!important;letter-spacing:-.035em;color:#18233d}
+.hero {background:linear-gradient(116deg,#1a2557 0%,#343b8c 55%,#146c78 100%);
+  border-radius:22px;padding:1.7rem 2rem 1.6rem;color:#fff;box-shadow:0 14px 35px #293c7830;
+  position:relative;overflow:hidden;margin-bottom:1.3rem;}
+.hero:before {content:'';position:absolute;width:360px;height:360px;right:-110px;top:-235px;
+  border-radius:50%;border:65px solid #ffffff12;pointer-events:none;}
+.hero .eyebrow {font-size:.73rem;letter-spacing:.18em;text-transform:uppercase;color:#b3eee7;font-weight:700;margin-bottom:.35rem;}
+.hero h1 {color:white!important;font-size:clamp(1.5rem,2.7vw,2.25rem);line-height:1.25;margin:.2rem 0 .55rem;}
+.hero p {color:#dbe4fa;line-height:1.6;max-width:780px;margin:0;font-size:.92rem}
+.brand {padding:.5rem 0 1.15rem;border-bottom:1px solid #e4e9f3;margin-bottom:1.4rem;}
+.brand-logo {font-size:1.47rem;font-weight:800;letter-spacing:-.055em;color:#2a3a78;font-family:Manrope,sans-serif}
+.brand-logo b {color:#008b83}
+.brand-small {font-size:.73rem;color:#71819a;letter-spacing:.06em;text-transform:uppercase;margin-top:.27rem}
+.helper {font-size:.84rem;color:#69788c;line-height:1.65}
+.kicker {font-size:.74rem;letter-spacing:.1em;text-transform:uppercase;color:#667595;font-weight:800;}
+.feature {background:#fff;border:1px solid #e5ebf4;border-radius:17px;padding:1.1rem 1.2rem;
+  box-shadow:0 6px 20px #17316209;min-height:120px}
+.feature strong {color:#283472;font-size:.99rem}
+.feature p {color:#64748b;font-size:.83rem;margin:.35rem 0 0;line-height:1.55}
+[data-testid="stChatMessage"] {background:#ffffffec;border:1px solid #e4eaf4;border-radius:17px;
+  box-shadow:0 4px 13px #13264b09;margin-bottom:.7rem;padding:.85rem 1.1rem}
+[data-testid="stMetric"] {background:#fff;border:1px solid #e6eaf3;border-radius:15px;padding:1rem 1.2rem;
+  box-shadow:0 4px 15px #101e3908}
+[data-testid="stFileUploader"] {background:#ffffffa8;border:1px dashed #9aabcf;border-radius:15px;padding:.5rem}
+[data-testid="stForm"] {background:#ffffffd9;border:1px solid #e6e9f5;border-radius:19px;padding:1.25rem 1.45rem;box-shadow:0 10px 30px #1525440c}
+.stButton>button,.stFormSubmitButton>button {border-radius:11px;min-height:2.55rem;font-weight:600;transition:all .15s}
+.stButton>button[kind="primary"],.stFormSubmitButton>button[kind="primary"] {background:linear-gradient(105deg,#4844b2,#147c85);color:white;border:0;}
+.stButton>button[kind="primary"]:hover,.stFormSubmitButton>button[kind="primary"]:hover {filter:brightness(1.1);color:white}
+.stTextInput input,.stTextArea textarea,.stSelectbox>div {border-radius:11px}
+button[data-baseweb="tab"] {font-weight:700}
+[data-testid="stAlert"] {border-radius:12px}
+hr {border-color:#e2e7f0}
+</style>
+''', unsafe_allow_html=True)
+
+init_db()
+CFG = get_ai_server_config()
 
 
-# ============================================================
-# 1. CẤU HÌNH ỨNG DỤNG
-# ============================================================
-
-ROOT = Path(__file__).resolve().parent
-UPLOAD_DIR = ROOT / "data" / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-AI_SERVER_CONFIG = get_ai_server_config()
-AI_SERVER_URL = AI_SERVER_CONFIG["base_url"]
-DEFAULT_MODEL = AI_SERVER_CONFIG["model"] or "qwen3:4b"
-
-st.set_page_config(
-    page_title="RAG-AI | Trợ lý tri thức",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-
-# ============================================================
-# 2. CSS - GIAO DIỆN SÁNG, CHỮ GRADIENT TỐI
-# ============================================================
-
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
-
-    :root {
-        --primary: #5145CD;
-        --primary-dark: #312E81;
-        --teal-dark: #115E59;
-        --text: #172033;
-        --muted: #64748B;
-        --border: #E2E8F0;
-        --surface: #FFFFFF;
-        --background: #F7F8FC;
-    }
-
-    html, body, [class*="css"] {
-        font-family: 'DM Sans', sans-serif;
-        color: var(--text);
-    }
-
-    .stApp {
-        background:
-            radial-gradient(
-                circle at 10% 0%,
-                rgba(99, 102, 241, 0.07),
-                transparent 28%
-            ),
-            #F7F8FC;
-    }
-
-    [data-testid="stHeader"] {
-        background: rgba(247, 248, 252, 0.92);
-    }
-
-    [data-testid="stSidebar"] {
-        background: #FFFFFF;
-        border-right: 1px solid #E2E8F0;
-    }
-
-    [data-testid="stSidebar"] > div:first-child {
-        padding-top: 1.2rem;
-    }
-
-    h1, h2, h3 {
-        font-family: 'Manrope', sans-serif !important;
-        letter-spacing: -0.035em;
-    }
-
-    .gradient-title {
-        font-family: 'Manrope', sans-serif;
-        font-size: clamp(2rem, 4vw, 3.1rem);
-        line-height: 1.15;
-        font-weight: 800;
-        letter-spacing: -0.055em;
-        background: linear-gradient(
-            115deg,
-            #312E81 0%,
-            #5145CD 42%,
-            #115E59 100%
-        );
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.45rem;
-    }
-
-    .gradient-subtitle {
-        color: #475569;
-        font-size: 1rem;
-        line-height: 1.7;
-        max-width: 760px;
-        margin-bottom: 1.5rem;
-    }
-
-    .section-title {
-        font-family: 'Manrope', sans-serif;
-        color: #1E1B4B;
-        font-weight: 800;
-        font-size: 1.3rem;
-        margin-bottom: 0.35rem;
-    }
-
-    .muted {
-        color: #64748B;
-        font-size: 0.92rem;
-        line-height: 1.6;
-    }
-
-    .brand {
-        padding: 0.35rem 0 1.2rem 0;
-        border-bottom: 1px solid #E2E8F0;
-        margin-bottom: 1.2rem;
-    }
-
-    .brand-name {
-        font-family: 'Manrope', sans-serif;
-        font-size: 1.35rem;
-        font-weight: 800;
-        letter-spacing: -0.04em;
-        background: linear-gradient(110deg, #312E81, #5145CD, #115E59);
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-
-    .brand-caption {
-        color: #64748B;
-        font-size: 0.8rem;
-        margin-top: 0.25rem;
-    }
-
-    .info-card {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 16px;
-        padding: 1rem 1.1rem;
-        margin-bottom: 0.8rem;
-        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.025);
-    }
-
-    .info-card-title {
-        font-weight: 700;
-        color: #312E81;
-        margin-bottom: 0.3rem;
-    }
-
-    .info-card-text {
-        color: #64748B;
-        font-size: 0.9rem;
-        line-height: 1.6;
-    }
-
-    .source-card {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-left: 4px solid #5145CD;
-        border-radius: 10px;
-        padding: 0.85rem 1rem;
-        margin: 0.5rem 0;
-        overflow-wrap: anywhere;
-    }
-
-    .source-name {
-        color: #312E81;
-        font-weight: 700;
-        font-size: 0.92rem;
-    }
-
-    .source-detail {
-        color: #64748B;
-        font-size: 0.82rem;
-        margin-top: 0.3rem;
-        line-height: 1.5;
-    }
-
-    .status-pill {
-        display: inline-block;
-        border-radius: 999px;
-        padding: 0.3rem 0.65rem;
-        background: #ECFDF5;
-        color: #065F46;
-        font-size: 0.8rem;
-        font-weight: 700;
-    }
-
-    .stButton > button {
-        border-radius: 10px;
-        font-weight: 600;
-        min-height: 2.65rem;
-        border: 1px solid #E2E8F0;
-        transition: all 0.15s ease;
-    }
-
-    .stButton > button:hover {
-        border-color: #818CF8;
-        color: #312E81;
-    }
-
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(110deg, #4338CA, #0F766E);
-        color: white;
-        border: none;
-    }
-
-    .stButton > button[kind="primary"]:hover {
-        color: white;
-        filter: brightness(1.06);
-    }
-
-    .stTextInput input,
-    .stTextArea textarea,
-    .stSelectbox div[data-baseweb="select"] {
-        border-radius: 10px;
-    }
-
-    [data-testid="stChatMessage"] {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 15px;
-        padding: 0.8rem 1rem;
-        margin-bottom: 0.8rem;
-    }
-
-    [data-testid="stMetric"] {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 14px;
-        padding: 1rem;
-    }
-
-    [data-testid="stFileUploader"] {
-        background: #FFFFFF;
-        border: 1px dashed #A5B4FC;
-        border-radius: 14px;
-        padding: 0.8rem;
-    }
-
-    hr {
-        border-color: #E2E8F0;
-    }
-
-    #MainMenu {
-        visibility: hidden;
-    }
-
-    footer {
-        visibility: hidden;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# 3. SESSION STATE VÀ HÀM HỖ TRỢ
-# ============================================================
-
-def initialize_state():
-    defaults = {
-        "current_page": "Chat",
-        "messages": [],
-        "model": DEFAULT_MODEL,
-        "temperature": 0.2,
-        "num_ctx": 4096,
-        "top_k": 5,
-        "min_similarity": 0.45,
-        "chunk_size": 200,
-        "overlap": 60,
-    }
-
+def setup_state():
+    defaults = {'actor': None, 'page': 'Trò chuyện', 'chat_mode': 'system',
+                'active_conversation': None, 'uploaded_indices': {}, 'eval_output': None}
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
-def set_page(page_name):
-    """Callback điều hướng; không chỉnh state của widget radio."""
-    st.session_state["current_page"] = page_name
-
-
-def check_ai_server():
-    try:
-        if not AI_SERVER_URL:
-            return False, []
-        response = requests.get(
-            f"{AI_SERVER_URL}/health",
-            timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()
-        if data.get("status") != "online":
-            return False, []
-        return True, [DEFAULT_MODEL]
-    except (requests.RequestException, ValueError):
-        return False, []
-
-
-def safe_text(value, default="Không có thông tin"):
-    if value is None:
-        return default
-    return str(value)
-
-
-def get_source_name(item):
-    if isinstance(item, str):
-        return item
-
-    if isinstance(item, dict):
-        for key in (
-            "source",
-            "source_name",
-            "filename",
-            "file_name",
-            "name",
-        ):
-            if item.get(key):
-                return str(item[key])
-
-        metadata = item.get("metadata", {})
-        if isinstance(metadata, dict):
-            for key in ("source", "filename", "file_name"):
-                if metadata.get(key):
-                    return str(metadata[key])
-
-    return str(item)
-
-
-def get_hit_metadata(hit):
-    if not isinstance(hit, dict):
-        return {}
-
-    metadata = hit.get("metadata", {})
-    if isinstance(metadata, dict):
-        return metadata
-
-    return {}
-
-
-def render_sources(hits):
-    if not hits:
-        st.caption("Không có đoạn tài liệu nguồn được trả về.")
-        return
-
-    with st.expander(f"📚 Nguồn tham khảo ({len(hits)} đoạn)", expanded=False):
-        seen = set()
-
-        for index, hit in enumerate(hits, start=1):
-            metadata = get_hit_metadata(hit)
-
-            if isinstance(hit, dict):
-                source = (
-                    hit.get("source")
-                    or hit.get("filename")
-                    or metadata.get("source")
-                    or metadata.get("filename")
-                    or "Tài liệu"
-                )
-
-                page_number = (
-                    metadata.get("page")
-                    or metadata.get("page_number")
-                    or hit.get("page")
-                )
-
-                content = (
-                    hit.get("text")
-                    or hit.get("content")
-                    or hit.get("document")
-                    or ""
-                )
-
-                if not content and isinstance(hit.get("page_content"), str):
-                    content = hit["page_content"]
-            else:
-                source = "Tài liệu"
-                page_number = None
-                content = str(hit)
-
-            unique_key = (str(source), str(page_number), str(content)[:100])
-            if unique_key in seen:
-                continue
-            seen.add(unique_key)
-
-            source_escaped = html.escape(str(source))
-            content_escaped = html.escape(str(content))
-            page_label = (
-                f" · Trang {html.escape(str(page_number))}"
-                if page_number is not None
-                else ""
-            )
-
-            st.markdown(
-                f"""
-                <div class="source-card">
-                    <div class="source-name">
-                        {index}. {source_escaped}{page_label}
-                    </div>
-                    <div class="source-detail">
-                        {content_escaped[:900]}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def display_stat_value(value):
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, indent=2)
-    return safe_text(value)
-
-
-def normalize_source_list(sources):
-    if sources is None:
-        return []
-
-    if isinstance(sources, dict):
-        # Một số phiên bản có thể trả về dict chứa danh sách tài liệu.
-        for key in ("sources", "documents", "files", "items"):
-            if isinstance(sources.get(key), list):
-                return sources[key]
-        return list(sources.keys())
-
-    if isinstance(sources, (list, tuple, set)):
-        return list(sources)
-
-    return [sources]
-
-
-def format_ingest_result(result):
-    if result is None:
-        return "Đã gửi tài liệu đến bộ xử lý."
-
-    if isinstance(result, dict):
-        message = (
-            result.get("message")
-            or result.get("status")
-            or result.get("detail")
-        )
-        if message:
-            return str(message)
-
-        return json.dumps(result, ensure_ascii=False)
-
-    return str(result)
-
-
-initialize_state()
-
-
-# ============================================================
-# 4. SIDEBAR - THƯƠNG HIỆU, ĐIỀU HƯỚNG, CẤU HÌNH
-# ============================================================
-
-with st.sidebar:
-    st.markdown(
-        """
-        <div class="brand">
-            <div class="brand-name">◈ RAG-AI</div>
-            <div class="brand-caption">
-                Retrieval-Augmented Generation
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("### 🧭 Điều hướng")
-
-    # Dùng các nút riêng, không dùng st.radio làm trạng thái trang.
-    # Vì vậy callback không thể gây lỗi WidgetAlreadyInstantiatedError.
-    current_page = st.session_state["current_page"]
-
-    st.button(
-        "💬  Trò chuyện",
-        key="nav_chat",
-        use_container_width=True,
-        type="primary" if current_page == "Chat" else "secondary",
-        on_click=set_page,
-        args=("Chat",),
-    )
-
-    st.button(
-        "📚  Kho tài liệu PDF",
-        key="nav_documents",
-        use_container_width=True,
-        type="primary" if current_page == "Kho tài liệu" else "secondary",
-        on_click=set_page,
-        args=("Kho tài liệu",),
-    )
-
-    st.button(
-        "📊  Thống kê hệ thống",
-        key="nav_stats",
-        use_container_width=True,
-        type="primary" if current_page == "Thống kê" else "secondary",
-        on_click=set_page,
-        args=("Thống kê",),
-    )
-
-    st.button(
-        "🙋  Hàng đợi nhân viên",
-        key="nav_handoff",
-        use_container_width=True,
-        type="primary" if current_page == "Hàng đợi nhân viên" else "secondary",
-        on_click=set_page,
-        args=("Hàng đợi nhân viên",),
-    )
-
-    st.divider()
-
-    st.markdown("### ⚙️ Cấu hình mô hình")
-
-    st.text_input(
-        "Model AI Server",
-        value=DEFAULT_MODEL,
-        disabled=True,
-        help="Model được cấu hình cố định trên máy chủ FastAPI.",
-    )
-
-    temperature = st.slider(
-        "Temperature",
-        min_value=0.0,
-        max_value=1.0,
-        step=0.1,
-        key="temperature",
-        help="Giá trị thấp thường tạo câu trả lời nhất quán hơn.",
-    )
-
-    num_ctx = st.select_slider(
-        "Context window",
-        options=[2048, 4096, 8192, 16384],
-        key="num_ctx",
-    )
-
-    top_k = st.slider(
-        "Số đoạn truy xuất (Top-K)",
-        min_value=1,
-        max_value=10,
-        step=1,
-        key="top_k",
-    )
-
-    st.slider(
-        "Ngưỡng chuyển nhân viên",
-        min_value=0.10,
-        max_value=0.90,
-        step=0.05,
-        key="min_similarity",
-        help="Nếu similarity cao nhất thấp hơn ngưỡng, câu hỏi sẽ được đề nghị chuyển nhân viên.",
-    )
-
-    st.divider()
-
-    st.markdown("### 🖥️ Trạng thái AI Server")
-
-    ai_server_ok, installed_models = check_ai_server()
-
-    if ai_server_ok:
-        st.markdown(
-            '<span class="status-pill">● AI Server đang hoạt động</span>',
-            unsafe_allow_html=True,
-        )
-
-        if installed_models:
-            st.caption("Model cấu hình trên máy chủ:")
-            for installed_model in installed_models[:8]:
-                st.caption(f"• {installed_model}")
-        else:
-            st.caption("Chưa tìm thấy model nào đã cài.")
-    else:
-        st.error("Không kết nối được AI Server.")
-        st.caption(
-            "Kiểm tra AI Server URL và trạng thái Cloudflare Tunnel "
-            "trong Streamlit Secrets."
-        )
-
-    st.divider()
-    st.caption("RAG-AI · Trợ lý hỏi đáp theo tài liệu")
-
-
-# ============================================================
-# 5. HÀM HIỂN THỊ HEADER
-# ============================================================
-
-def render_header(title, subtitle):
-    st.markdown(
-        f'<div class="gradient-title">{html.escape(title)}</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div class="gradient-subtitle">{html.escape(subtitle)}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ============================================================
-# 6. TRANG CHATBOT
-# ============================================================
-
-def render_chat_page():
-    render_header(
-        "Trợ lý tri thức AI",
-        "Đặt câu hỏi bằng ngôn ngữ tự nhiên. RAG-AI sẽ tìm các đoạn "
-        "tài liệu liên quan trước khi tạo câu trả lời.",
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    try:
-        stats = get_collection_stats()
-    except Exception:
-        stats = {}
-
-    if not isinstance(stats, dict):
-        stats = {}
-
-    document_count = (
-        stats.get("document_count")
-        or stats.get("documents")
-        or stats.get("total_documents")
-        or 0
-    )
-
-    chunk_count = (
-        stats.get("chunk_count")
-        or stats.get("total_chunks")
-        or stats.get("chunks")
-        or 0
-    )
-
-    with col1:
-        st.metric("Đoạn dữ liệu", document_count)
-
-    with col2:
-        st.metric("Số đoạn truy xuất", st.session_state["top_k"])
-
-    with col3:
-        st.metric(
-            "Kết nối AI Server",
-            "Gateway online" if ai_server_ok else "Ngoại tuyến",
-        )
-
-    st.markdown("---")
-
-    # Hiển thị lịch sử trò chuyện.
-    for message in st.session_state["messages"]:
-        role = message.get("role", "assistant")
-        content = message.get("content", "")
-        if role == "assistant":
-            content = clean_model_answer(content)
-
-        # Không dùng avatar tùy chỉnh để tránh lỗi đường dẫn avatar.
-        with st.chat_message(role):
-            st.markdown(content)
-
-            if role == "assistant" and message.get("hits"):
-                render_sources(message["hits"])
-
-    prompt = st.chat_input(
-        "Nhập câu hỏi của bạn về tài liệu...",
-        key="chat_prompt",
-    )
-
-    if prompt:
-        if not ai_server_ok:
-            st.error(
-                "Không kết nối được AI Server. Hãy kiểm tra máy chủ "
-                "và Cloudflare Tunnel trước khi gửi câu hỏi."
-            )
-            return
-
-        st.session_state["messages"].append(
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        )
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            response_placeholder = st.empty()
-
-            try:
-                with st.spinner("Đang tìm tài liệu và tạo câu trả lời..."):
-                    hits = retrieve_context(
-                        prompt,
-                        top_k=int(st.session_state["top_k"]),
-                    )
-
-                    answer, generation_metadata = generate_answer(
-                        prompt,
-                        hits,
-                        model=st.session_state["model"],
-                        temperature=float(st.session_state["temperature"]),
-                        num_ctx=int(st.session_state["num_ctx"]),
-                    )
-                    handoff_required, handoff_reason, similarity = should_handoff(
-                        hits,
-                        generation_metadata,
-                        min_similarity=float(st.session_state["min_similarity"]),
-                    )
-                    st.metric(
-                        label="Độ tương đồng cao nhất",
-                        value=f"{similarity:.2%}",
-                    )
-                    best_similarity = max(
-                        (float(hit.get("similarity", 0.0)) for hit in hits),
-                        default=0.0,
-                    )
-                    record_interaction(
-                        handoff_required=handoff_required,
-                        best_similarity=best_similarity,
-                    )
-
-                if answer is None:
-                    answer = "Mô hình không trả về nội dung câu trả lời."
-
-                answer = str(answer)
-                response_placeholder.markdown(answer)
-
-                if hits:
-                    render_sources(hits)
-
-                if handoff_required:
-                    st.warning(
-                        "⚠️ Câu hỏi này cần nhân viên kiểm tra thêm. "
-                        f"Lý do: {handoff_reason}"
-                    )
-                    if st.button(
-                        "🙋 Chuyển câu hỏi cho nhân viên",
-                        key=f"handoff_{len(st.session_state['messages'])}",
-                        type="primary",
-                    ):
-                        create_handoff_request(
-                            question=prompt,
-                            answer=answer,
-                            reason=handoff_reason,
-                            hits=hits,
-                        )
-                        st.success(
-                            "Đã ghi nhận yêu cầu. Nhân viên có thể tiếp nhận "
-                            "tại trang Hàng đợi nhân viên."
-                        )
-
-                st.session_state["messages"].append(
-                    {
-                        "role": "assistant",
-                        "content": answer,
-                        "hits": hits or [],
-                        "handoff_required": handoff_required,
-                        "handoff_reason": handoff_reason,
-                        "generation_metadata": generation_metadata,
-                    }
-                )
-
-            except Exception as exc:
-                error_message = (
-                    f"Đã xảy ra lỗi khi xử lý câu hỏi: {exc}\n\n"
-                    "Hãy kiểm tra AI Server, Cloudflare Tunnel "
-                    "và Streamlit Secrets."
-                )
-                response_placeholder.error(error_message)
-
-                st.session_state["messages"].append(
-                    {
-                        "role": "assistant",
-                        "content": error_message,
-                        "hits": [],
-                    }
-                )
-
-    if st.session_state["messages"]:
-        st.markdown("---")
-        if st.button("🗑️ Xóa lịch sử trò chuyện", key="clear_chat"):
-            st.session_state["messages"] = []
-            st.rerun()
-
-
-# ============================================================
-# 7. TRANG KHO TÀI LIỆU PDF
-# ============================================================
-
-def render_documents_page():
-    render_header(
-        "Kho tài liệu",
-        "Tải tài liệu PDF lên để hệ thống trích xuất nội dung, chia "
-        "thành các đoạn và lập chỉ mục phục vụ truy xuất RAG.",
-    )
-
-    st.markdown(
-        """
-        <div class="info-card">
-            <div class="info-card-title">📄 Quy trình xử lý tài liệu</div>
-            <div class="info-card-text">
-                1. Chọn một hoặc nhiều tệp PDF.<br>
-                2. Cấu hình kích thước đoạn và phần chồng lấp.<br>
-                3. Nhấn xử lý để đưa tài liệu vào kho truy xuất.<br>
-                4. Quay lại trang Trò chuyện để đặt câu hỏi.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("### 📤 Tải PDF lên")
-
-    uploaded_files = st.file_uploader(
-        "Chọn một hoặc nhiều tệp PDF",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key="pdf_uploader",
-        help="Chỉ hỗ trợ tệp PDF.",
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.slider(
-            "Kích thước mỗi đoạn (chunk size)",
-            min_value=200,
-            max_value=2000,
-            step=100,
-            key="chunk_size",
-        )
-
-    with col2:
-        st.slider(
-            "Độ chồng lấp giữa các đoạn (overlap)",
-            min_value=0,
-            max_value=500,
-            step=20,
-            key="overlap",
-        )
-
-    chunk_size = int(st.session_state["chunk_size"])
-    overlap = int(st.session_state["overlap"])
-
-    if overlap >= chunk_size:
-        st.warning("Overlap phải nhỏ hơn chunk size.")
-    else:
-        st.caption(
-            f"Chunk size: {chunk_size} · Overlap: {overlap}"
-        )
-
-    if uploaded_files:
-        st.markdown(f"**Đã chọn {len(uploaded_files)} tệp:**")
-
-        for uploaded in uploaded_files:
-            st.write(f"📄 {uploaded.name} · {uploaded.size:,} bytes")
-
-    can_process = bool(uploaded_files) and overlap < chunk_size
-
-    if st.button(
-        "⚡ XỬ LÝ VÀ LẬP CHỈ MỤC",
-        type="primary",
-        use_container_width=True,
-        disabled=not can_process,
-        key="process_pdfs",
-    ):
-        success_count = 0
-        failure_count = 0
-
-        progress = st.progress(0)
-        status = st.empty()
-
-        for index, uploaded in enumerate(uploaded_files):
-            status.info(
-                f"Đang xử lý {index + 1}/{len(uploaded_files)}: "
-                f"{uploaded.name}"
-            )
-
-            try:
-                raw_bytes = uploaded.getvalue()
-
-                if not raw_bytes:
-                    raise ValueError("Tệp rỗng.")
-
-                # Lưu bản PDF gốc vào thư mục uploads.
-                safe_filename = Path(uploaded.name).name
-                save_path = UPLOAD_DIR / safe_filename
-                save_path.write_bytes(raw_bytes)
-
-                # Đưa PDF vào pipeline hiện có của rag_engine.py.
-                result = ingest_pdf_bytes(
-                    uploaded.name,
-                    raw_bytes,
-                    chunk_size=chunk_size,
-                    overlap=overlap,
-                )
-
-                st.success(
-                    f"Đã xử lý {uploaded.name}: "
-                    f"{format_ingest_result(result)}"
-                )
-                success_count += 1
-
-            except Exception as exc:
-                st.error(f"Lỗi với {uploaded.name}: {exc}")
-                failure_count += 1
-
-            progress.progress((index + 1) / len(uploaded_files))
-
-        status.empty()
-
-        if success_count:
-            st.success(
-                f"Hoàn tất: {success_count} tệp thành công, "
-                f"{failure_count} tệp thất bại."
-            )
-
-        if success_count:
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown("### 🗂️ Tài liệu đã lập chỉ mục")
-
-    try:
-        sources = normalize_source_list(list_indexed_sources())
-    except Exception as exc:
-        st.error(f"Không tải được danh sách tài liệu: {exc}")
-        sources = []
-
-    if not sources:
-        st.info(
-            "Kho tài liệu chưa có dữ liệu hoặc chưa thể lấy danh sách. "
-            "Hãy tải PDF lên và xử lý ở phần phía trên."
-        )
-        return
-
-    st.caption(f"Tổng số mục nguồn: {len(sources)}")
-
-    for index, source_item in enumerate(sources):
-        source_name = get_source_name(source_item)
-
-        with st.container(border=True):
-            col_name, col_delete = st.columns([5, 1])
-
-            with col_name:
-                st.markdown(f"**📄 {source_name}**")
-
-                if isinstance(source_item, dict):
-                    metadata = source_item.get("metadata", {})
-                    if isinstance(metadata, dict) and metadata:
-                        st.caption(
-                            " · ".join(
-                                f"{key}: {value}"
-                                for key, value in metadata.items()
-                            )
-                        )
-
-            with col_delete:
-                if st.button(
-                    "🗑️",
-                    key=f"delete_source_{index}_{source_name}",
-                    help=f"Xóa nguồn {source_name} khỏi chỉ mục",
-                ):
-                    st.session_state["pending_delete_source_id"] = (
-                        source_item.get("source_id")
-                        if isinstance(source_item, dict)
-                        else None
-                    )
-                    st.session_state["pending_delete_source_name"] = source_name
-
-    pending_source_id = st.session_state.get("pending_delete_source_id")
-    pending_source = st.session_state.get("pending_delete_source_name")
-
-    if pending_source:
-        st.warning(
-            f"Bạn có chắc muốn xóa nguồn **{pending_source}** "
-            "khỏi kho chỉ mục?"
-        )
-
-        col_confirm, col_cancel = st.columns(2)
-
-        with col_confirm:
-            if st.button(
-                "Xác nhận xóa",
-                type="primary",
-                key="confirm_delete_source",
-            ):
-                try:
-                    if not pending_source_id:
-                        raise ValueError("Không xác định được source_id của tài liệu.")
-                    delete_source(pending_source_id)
-                    st.success(
-                        f"Đã gửi yêu cầu xóa nguồn {pending_source}."
-                    )
-                    st.session_state.pop("pending_delete_source_id", None)
-                    st.session_state.pop("pending_delete_source_name", None)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Không thể xóa nguồn: {exc}")
-
-        with col_cancel:
-            if st.button("Hủy", key="cancel_delete_source"):
-                st.session_state.pop("pending_delete_source_id", None)
-                st.session_state.pop("pending_delete_source_name", None)
-                st.rerun()
-
-
-# ============================================================
-# 8. TRANG THỐNG KÊ
-# ============================================================
-
-def render_stats_page():
-    render_header(
-        "Thống kê hệ thống",
-        "Theo dõi tình trạng kết nối mô hình và thông tin kho tài liệu.",
-    )
-
-    ai_server_connected, models = check_ai_server()
-
-    try:
-        stats = get_collection_stats()
-    except Exception as exc:
-        stats = {}
-        st.error(f"Không lấy được thống kê kho dữ liệu: {exc}")
-
-    if not isinstance(stats, dict):
-        stats = {"Thông tin kho dữ liệu": stats}
-
-    try:
-        sources = normalize_source_list(list_indexed_sources())
-    except Exception:
-        sources = []
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Nguồn tài liệu", len(sources))
-
-    with col2:
-        st.metric(
-            "AI Gateway",
-            "Online" if ai_server_connected else "Offline",
-        )
-
-    with col3:
-        st.metric("Tin nhắn trong phiên", len(st.session_state["messages"]))
-
-    try:
-        operational_metrics = get_operational_metrics()
-    except ValueError as exc:
-        operational_metrics = {}
-        st.error(str(exc))
-
-    st.markdown("---")
-    st.markdown("### 📈 Chỉ số vận hành")
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    with metric_col1:
-        st.metric(
-            "Câu hỏi đã xử lý",
-            operational_metrics.get("questions", 0),
-        )
-    with metric_col2:
-        st.metric(
-            "Số lượt chuyển nhân viên",
-            operational_metrics.get("handoffs", 0),
-        )
-    with metric_col3:
-        st.metric(
-            "Tỷ lệ chuyển tiếp",
-            f"{operational_metrics.get('handoff_rate', 0.0):.1%}",
-        )
-    st.caption(
-        "Các chỉ số này là số liệu vận hành, không thay thế đánh giá accuracy "
-        "trên bộ câu hỏi có đáp án chuẩn."
-    )
-
-    st.markdown("---")
-    st.markdown("### 📦 Thông tin kho dữ liệu")
-
-    if stats:
-        for key, value in stats.items():
-            st.markdown(f"**{key.replace('_', ' ').title()}**")
-            if isinstance(value, (dict, list)):
-                st.json(value)
-            else:
-                st.write(value)
-    else:
-        st.info("Chưa có thông tin thống kê được trả về.")
-
-    st.markdown("---")
-    st.markdown("### 🖥️ AI Gateway")
-
-    if ai_server_connected:
-        st.success(f"Kết nối thành công: {AI_SERVER_URL}")
-    else:
-        st.error(f"Không kết nối được: {AI_SERVER_URL}")
-
-    st.markdown("**Model đã cài**")
-
-    if models:
-        for model_name in models:
-            selected = (
-                " (đang chọn)"
-                if model_name == st.session_state["model"]
-                else ""
-            )
-            st.write(f"• {model_name}{selected}")
-    else:
-        st.info("Không tìm thấy model hoặc AI Server chưa hoạt động.")
-
-    st.markdown("---")
-    st.markdown("### 📚 Danh sách nguồn")
-
-    if sources:
-        for source_item in sources:
-            st.write(f"📄 {get_source_name(source_item)}")
-    else:
-        st.info("Chưa có nguồn tài liệu được lập chỉ mục.")
-
-
-def render_handoff_page():
-    render_header(
-        "Hàng đợi nhân viên",
-        "Các câu hỏi có độ tin cậy thấp được lưu lại để nhân viên kiểm tra "
-        "và phản hồi.",
-    )
-    requests_data = list_handoff_requests()
-    if not requests_data:
-        st.info("Chưa có yêu cầu nào cần nhân viên tiếp nhận.")
-        return
-
-    st.metric(
-        "Yêu cầu đang chờ",
-        sum(item.get("status") == "pending" for item in requests_data),
-    )
-    for item in reversed(requests_data):
-        with st.container(border=True):
-            st.markdown(
-                f"**{item.get('id', 'Không có mã')}** · "
-                f"{item.get('created_at', 'Không rõ thời gian')}"
-            )
-            st.markdown(f"**Câu hỏi:** {item.get('question', '')}")
-            st.markdown(f"**Lý do chuyển:** {item.get('reason', '')}")
-            st.markdown(f"**Câu trả lời tự động:** {item.get('answer', '')}")
-            sources = item.get("sources") or []
-            if sources:
-                st.caption(
-                    "Nguồn đã truy xuất: "
-                    + ", ".join(
-                        f"{source.get('source', 'không rõ')} "
-                        f"(trang {source.get('page', '?')})"
-                        for source in sources
-                    )
-                )
-
-
-# ============================================================
-# 9. ĐIỀU PHỐI TRANG
-# ============================================================
-
-page = st.session_state["current_page"]
-
-if page == "Chat":
-    render_chat_page()
-
-elif page == "Kho tài liệu":
-    render_documents_page()
-
-elif page == "Thống kê":
-    render_stats_page()
-
-elif page == "Hàng đợi nhân viên":
-    render_handoff_page()
-
-else:
-    st.session_state["current_page"] = "Chat"
+def signout():
+    for k in ('actor','page','chat_mode','active_conversation','uploaded_indices','eval_output'):
+        st.session_state.pop(k, None)
+    # Streamlit widget state can hold form values. Clear it upon logout as well.
+    for key in list(st.session_state.keys()):
+        if key.startswith(('auth_', 'private_', 'chat_', 'eval_', 'admin_')):
+            st.session_state.pop(key, None)
     st.rerun()
 
 
-# ============================================================
-# 10. FOOTER
-# ============================================================
+def hero(title, caption, eyebrow='RAG-AI  ·  KNOWLEDGE SERVICE'):
+    st.markdown(f'''<div class="hero"><div class="eyebrow">{html.escape(eyebrow)}</div>
+      <h1>{html.escape(title)}</h1><p>{html.escape(caption)}</p></div>''', unsafe_allow_html=True)
 
-st.markdown("---")
-st.markdown(
-    """
-    <div style="
-        text-align: center;
-        color: #64748B;
-        font-size: 0.82rem;
-        padding: 0.4rem 0 1rem 0;
-    ">
-        RAG-AI · Hỏi đáp dựa trên tài liệu · Powered by AI Server
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+
+def role_text(role):
+    return {'user':'Khách hàng / người học', 'staff':'Nhân viên hỗ trợ', 'admin':'Quản trị viên'}.get(role, role)
+
+
+def auth_page():
+    a,b,c = st.columns([1, 2.35, 1])
+    with b:
+        hero('Cổng tri thức & hỗ trợ thông minh',
+             'Hỏi đáp theo tài liệu chính thức, truy xuất nguồn minh bạch và chuyển tiếp nhân viên khi cần xác minh.',
+             '✦  RAG-AI ENTERPRISE')
+        tab_in, tab_up = st.tabs(['Đăng nhập', 'Tạo tài khoản'])
+        with tab_in:
+            with st.form('auth_login_form'):
+                st.markdown('#### Chào mừng trở lại')
+                profile = st.radio('Cổng đăng nhập', ['Người dùng', 'Nhân viên / quản trị'], horizontal=True)
+                email = st.text_input('Email', key='auth_email', placeholder='you@example.com')
+                password = st.text_input('Mật khẩu', type='password', key='auth_password')
+                submitted = st.form_submit_button('Đăng nhập', type='primary', use_container_width=True)
+            if submitted:
+                actor = login(email, password)
+                allowed = (actor and (profile == 'Người dùng' and actor['role']=='user' or
+                                      profile != 'Người dùng' and actor['role'] in {'staff','admin'}))
+                if not allowed:
+                    st.error('Thông tin đăng nhập hoặc cổng truy cập không hợp lệ. Tài khoản có thể bị khóa tạm thời nếu thử sai nhiều lần.')
+                else:
+                    st.session_state['actor'] = actor
+                    st.session_state['page'] = 'Trò chuyện'
+                    st.session_state['active_conversation'] = None
+                    st.rerun()
+        with tab_up:
+            with st.form('auth_signup_form'):
+                st.markdown('#### Đăng ký sử dụng dịch vụ')
+                account_type = st.radio('Loại tài khoản', ['Người dùng', 'Nhân viên'], horizontal=True)
+                name = st.text_input('Họ và tên', key='auth_name')
+                email = st.text_input('Email đăng ký', key='auth_new_email')
+                pw = st.text_input('Mật khẩu (ít nhất 12 ký tự)', type='password', key='auth_new_pw')
+                confirm = st.text_input('Nhập lại mật khẩu', type='password', key='auth_confirm')
+                invite = st.text_input('Mã mời nhân viên (bỏ trống nếu là người dùng)', type='password', key='auth_invite')
+                submitted = st.form_submit_button('Tạo tài khoản', type='primary', use_container_width=True)
+            st.caption('Tài khoản nhân viên cần mã mời do quản trị cấp. Không có đăng ký quản trị tự do.')
+            if submitted:
+                if pw != confirm:
+                    st.error('Hai mật khẩu không trùng khớp.')
+                else:
+                    try:
+                        actor = create_account(name, email, pw,
+                                               role='staff' if account_type=='Nhân viên' else 'user',
+                                               invite_code=invite)
+                        st.session_state['actor'] = actor
+                        st.session_state['active_conversation'] = None
+                        st.rerun()
+                    except (ValueError, PermissionError) as exc:
+                        st.error(str(exc))
+    st.stop()
+
+
+setup_state()
+actor = st.session_state['actor']
+if actor:
+    # Revalidate role on every script run to prevent stale or modified session claims.
+    actor = get_user(actor['id'])
+    if not actor:
+        signout()
+    st.session_state['actor'] = actor
+else:
+    auth_page()
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def gateway_online(url):
+    if not url:
+        return False
+    try:
+        r = requests.get(url + '/health', timeout=3)
+        return r.ok and r.json().get('status') == 'online'
+    except (requests.RequestException, ValueError):
+        return False
+
+
+is_staff = actor['role'] in {'staff', 'admin'}
+
+
+def nav_button(label, page, icon):
+    if st.button(f'{icon}  {label}', key='nav_'+page, use_container_width=True,
+                 type='primary' if st.session_state['page'] == page else 'secondary'):
+        st.session_state['page'] = page
+        st.rerun()
+
+
+with st.sidebar:
+    st.markdown('<div class="brand"><div class="brand-logo">✦ RAG<b>–AI</b></div><div class="brand-small">Enterprise knowledge portal</div></div>', unsafe_allow_html=True)
+    st.markdown(f'**{actor["name"]}**')
+    st.caption(f'{role_text(actor["role"])} · {actor["email"]}')
+    st.divider()
+    st.markdown('<div class="kicker">Không gian làm việc</div>', unsafe_allow_html=True)
+    nav_button('Trò chuyện', 'Trò chuyện', '💬')
+    nav_button('Yêu cầu hỗ trợ của tôi', 'Yêu cầu của tôi', '🧾')
+    nav_button('Tài khoản & bảo mật', 'Tài khoản', '🛡️')
+    if is_staff:
+        nav_button('Kho tài liệu hệ thống', 'Kho tài liệu', '📚')
+        nav_button('Hàng đợi hỗ trợ', 'Hàng đợi', '🎧')
+        nav_button('Báo cáo vận hành', 'Báo cáo', '📊')
+        nav_button('Đánh giá RAG', 'Đánh giá', '🧪')
+    if actor['role'] == 'admin':
+        nav_button('Quản trị tài khoản', 'Quản trị', '🔐')
+    st.divider()
+    st.markdown('<div class="kicker">Phiên trò chuyện gần đây</div>', unsafe_allow_html=True)
+    conversations = list_conversations(actor)
+    for c in conversations[:6]:
+        tiny = '🏛' if c['mode'] == 'system' else '📎'
+        if st.button(tiny + '  ' + c['title'][:36], key='conversation_'+c['id'], use_container_width=True):
+            st.session_state['active_conversation'] = c['id']
+            st.session_state['chat_mode'] = c['mode']
+            st.session_state['page'] = 'Trò chuyện'
+            st.rerun()
+    st.divider()
+    st.caption('● AI Gateway trực tuyến' if gateway_online(CFG['base_url']) else '○ AI Gateway chưa kết nối')
+    st.caption('Model: ' + CFG['model'])
+    if st.button('Đăng xuất', key='sign_out', use_container_width=True):
+        signout()
+
+
+def source_panel(sources):
+    if not sources:
+        return
+    with st.expander(f'Xem trích dẫn và nguồn tham khảo ({len(sources)})'):
+        for src in sources:
+            st.markdown(f"**{src.get('source', 'Tài liệu')}** · Trang {src.get('page','?')}")
+            st.caption('Cosine: {:.3f} · Chỉ số bằng chứng: {:.0%}'.format(
+                float(src.get('similarity',0)), float(src.get('evidence_score',0))))
+
+
+def render_history(conversation_id):
+    messages = list_messages(actor, conversation_id) if conversation_id else []
+    last_user = ''
+    for message in messages:
+        role = message['role']
+        with st.chat_message(role, avatar='✦' if role == 'assistant' else '👤'):
+            st.markdown(message['content'])
+            if role == 'user':
+                last_user = message['content']
+            if role == 'assistant':
+                source_panel(message['sources'])
+                if message['evidence_score'] is not None:
+                    st.caption('Chỉ số phù hợp bằng chứng: **{:.0%}** · Không phải xác suất câu trả lời đúng.'.format(message['evidence_score']))
+                if message['needs_handoff']:
+                    st.warning('Nên chuyển nhân viên: ' + message['handoff_reason'])
+                existing = get_handoff_for_message(actor, message['id'])
+                if existing:
+                    st.info(f"Yêu cầu {existing['id']} · Trạng thái: {existing['status']}")
+                    if existing['staff_reply']:
+                        st.success('**Nhân viên phản hồi:** ' + existing['staff_reply'])
+                else:
+                    vote1, vote2, escalate = st.columns([1,1,3])
+                    with vote1:
+                        if st.button('👍 Hữu ích', key='good_'+message['id']):
+                            submit_feedback(actor, message['id'], True)
+                            st.rerun()
+                    with vote2:
+                        if st.button('👎 Chưa đúng', key='bad_'+message['id']):
+                            submit_feedback(actor, message['id'], False)
+                            st.rerun()
+                    with escalate:
+                        if st.button('🎧 Chuyển nhân viên', key='escalate_'+message['id']):
+                            request_handoff(actor, conversation_id, message['id'], last_user,
+                                            message['content'], message['handoff_reason'] or 'Người dùng đề nghị nhân viên kiểm tra.',
+                                            message['sources'])
+                            st.rerun()
+                if feedback_for_message(actor, message['id']) is not None:
+                    st.caption('Đã ghi nhận phản hồi chất lượng của bạn.')
+    return messages
+
+
+def uploaded_document_manager():
+    st.markdown('##### 📎 Kho tài liệu riêng của phiên')
+    st.caption('Tài liệu tải lên không được thêm vào kho chung. Nội dung được gửi tới AI Gateway khi đặt câu hỏi.')
+    files = st.file_uploader('Chọn tệp PDF, DOCX hoặc TXT (tối đa 12 MB/tệp)',
+                             type=['pdf','docx','txt'], accept_multiple_files=True,
+                             key='private_file_uploader')
+    if files and st.button('Lập chỉ mục tài liệu riêng', key='private_index', type='primary'):
+        for uploaded in files:
+            try:
+                content = uploaded.getvalue()
+                import hashlib
+                signature = hashlib.sha256(content).hexdigest()
+                if signature not in st.session_state['uploaded_indices']:
+                    with st.spinner('Đang trích xuất và nhúng: ' + uploaded.name):
+                        item = index_upload(uploaded.name, content)
+                    st.session_state['uploaded_indices'][signature] = item
+                    st.success('Đã nạp ' + uploaded.name)
+            except Exception as exc:
+                st.error(f'{uploaded.name}: {exc}')
+        st.rerun()
+    for sig, item in list(st.session_state['uploaded_indices'].items()):
+        left, right = st.columns([6, 1])
+        left.caption(f"📄 {item['filename']} · {item['pages']} trang · {len(item['chunks'])} đoạn")
+        if right.button('Xóa', key='private_remove_'+sig):
+            del st.session_state['uploaded_indices'][sig]
+            st.rerun()
+    if st.session_state['uploaded_indices'] and st.button('Xóa toàn bộ tài liệu riêng', key='private_clear'):
+        st.session_state['uploaded_indices'] = {}
+        st.rerun()
+
+
+def chat_page():
+    hero('Trợ lý tri thức AI', 'Tra cứu thông tin chính sách, quy chế và tài liệu của bạn — với trích dẫn minh bạch và cơ chế hỗ trợ con người.')
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown('<div class="feature"><strong>🏛 Kho tri thức chính thức</strong><p>Dữ liệu do nhân viên kiểm duyệt và quản lý.</p></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown('<div class="feature"><strong>📎 Tài liệu cá nhân</strong><p>Chỉ truy xuất nội dung bạn tải lên trong phiên.</p></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown('<div class="feature"><strong>🎧 Human-in-the-loop</strong><p>Nhân viên tiếp nhận khi thiếu bằng chứng.</p></div>', unsafe_allow_html=True)
+    st.markdown('#### Chọn phạm vi trả lời')
+    mode = st.radio('Nguồn dữ liệu', ['system','upload'],
+                    format_func=lambda v: '🏛 Tài liệu có sẵn trên hệ thống' if v == 'system' else '📎 Tài liệu tôi tải lên',
+                    horizontal=True, key='chat_mode')
+    if mode == 'upload':
+        uploaded_document_manager()
+        st.divider()
+    conv_id = st.session_state['active_conversation']
+    conversation = get_conversation(actor, conv_id) if conv_id else None
+    if conversation and conversation['mode'] != mode:
+        conversation, conv_id = None, None
+        st.session_state['active_conversation'] = None
+    heading_l, heading_r = st.columns([5,1])
+    heading_l.markdown('#### Nội dung trao đổi')
+    if heading_r.button('＋ Chat mới', use_container_width=True):
+        st.session_state['active_conversation'] = None
+        st.rerun()
+    messages = render_history(conv_id)
+    if not messages:
+        st.info('Bạn có thể đặt câu hỏi về học vụ, bảo hành, chính sách hoặc nội dung tài liệu đã chọn.')
+    disabled = mode == 'upload' and not st.session_state['uploaded_indices']
+    if disabled:
+        st.caption('Hãy nạp ít nhất một tài liệu vào kho riêng trước khi bắt đầu hỏi đáp.')
+    prompt = st.chat_input('Nhập câu hỏi của bạn...', disabled=disabled,
+                           key='chat_prompt_'+mode)
+    if prompt:
+        if len(prompt) > 3000:
+            st.error('Câu hỏi tối đa 3.000 ký tự.')
+            return
+        if not conv_id:
+            conv_id = new_conversation(actor, mode, prompt)
+            st.session_state['active_conversation'] = conv_id
+        add_message(actor, conv_id, 'user', prompt)
+        try:
+            with st.spinner('Đang truy xuất nguồn và tổng hợp câu trả lời...'):
+                search_query = contextualize_query(prompt, messages)
+                if mode == 'system':
+                    hits = retrieve_context(search_query, top_k=5)
+                else:
+                    hits = retrieve_uploaded(search_query, list(st.session_state['uploaded_indices'].values()), top_k=5)
+                answer, meta = generate_answer(prompt, hits, model=CFG['model'])
+                escalate, reason, score = should_handoff(hits, meta, min_similarity=0.45)
+                add_message(actor, conv_id, 'assistant', answer, hits=hits,
+                            evidence_score=score, needs_handoff=escalate, reason=reason)
+                log_event(actor, mode, score, escalate)
+        except Exception:
+            # Details may include server URLs, credentials or library internals.
+            add_message(actor, conv_id, 'assistant',
+                        'Hệ thống tạm thời chưa xử lý được câu hỏi. Vui lòng thử lại hoặc liên hệ nhân viên.',
+                        evidence_score=0, needs_handoff=True, reason='Lỗi xử lý / kết nối dịch vụ')
+            log_event(actor, mode, 0, True)
+        st.rerun()
+
+
+def requests_page():
+    hero('Yêu cầu hỗ trợ của tôi', 'Theo dõi các câu hỏi đã chuyển và phản hồi chính thức từ nhân viên.', 'CUSTOMER SUPPORT')
+    # Private view: users only see their own handoffs via message ownership.
+    related = []
+    for c in list_conversations(actor):
+        for m in list_messages(actor, c['id']):
+            if m['role'] == 'assistant':
+                h = get_handoff_for_message(actor, m['id'])
+                if h:
+                    related.append((c, m, h))
+    if not related:
+        st.info('Bạn chưa gửi yêu cầu nào đến nhân viên.')
+    for conversation, message, ticket in related:
+        with st.container(border=True):
+            st.markdown(f"**🎧 {ticket['id']}** · {ticket['status']}")
+            st.caption('Cuộc trao đổi: ' + conversation['title'])
+            if ticket['staff_reply']:
+                st.success(ticket['staff_reply'])
+            elif ticket['status'] == 'in_progress':
+                st.info('Nhân viên đang xử lý yêu cầu.')
+            else:
+                st.caption('Yêu cầu đang chờ tiếp nhận.')
+
+
+def documents_page():
+    require_role(actor)
+    hero('Kho tài liệu chính thức', 'Quản lý nguồn tri thức dùng chung cho tất cả người dùng. Chỉ nhân viên có quyền bổ sung và xóa tài liệu.', 'KNOWLEDGE MANAGEMENT')
+    with st.container(border=True):
+        st.markdown('#### Nhập tài liệu mới')
+        st.caption('Tệp PDF chứa văn bản; bản scan cần OCR trước khi nhập. Tối đa 30 MB/tệp.')
+        files = st.file_uploader('Tệp PDF', type=['pdf'], accept_multiple_files=True, key='system_files')
+        left, right = st.columns(2)
+        chunk = left.slider('Chunk size (ký tự)', 400, 1600, 850, 50)
+        overlap = right.slider('Overlap (ký tự)', 50, 300, 140, 10)
+        if st.button('Lập chỉ mục vào kho chung', type='primary', disabled=not files):
+            for uploaded in files:
+                try:
+                    with st.spinner('Đang xử lý: '+uploaded.name):
+                        result = ingest_pdf_bytes(uploaded.name, uploaded.getvalue(), chunk, overlap)
+                    st.success(f"{result['filename']}: {result['pages']} trang, {result['chunks']} đoạn")
+                except Exception as exc:
+                    st.error(f'{uploaded.name}: {exc}')
+    st.markdown('#### Danh mục tài liệu')
+    try:
+        sources = list_indexed_sources()
+    except Exception as exc:
+        st.error(f'Không đọc được kho dữ liệu: {exc}')
+        return
+    if not sources:
+        st.info('Kho chưa có tài liệu. Hãy nạp PDF phía trên.')
+    for src in sources:
+        with st.container(border=True):
+            main, action = st.columns([6,1])
+            main.markdown(f"**📄 {src['source']}**")
+            main.caption(f"{src['pages']} trang · {src['chunks']} đoạn")
+            if action.button('Xóa', key='delete_'+src['source_id']):
+                st.session_state['delete_pending'] = src['source_id']
+                st.rerun()
+            if st.session_state.get('delete_pending') == src['source_id']:
+                st.warning('Thao tác xóa có hiệu lực với toàn bộ người dùng. Xác nhận xóa tài liệu này?')
+                yes, no = st.columns(2)
+                if yes.button('Xác nhận', key='yes_'+src['source_id'], type='primary'):
+                    delete_source(src['source_id'])
+                    st.session_state['delete_pending'] = None
+                    st.rerun()
+                if no.button('Hủy', key='no_'+src['source_id']):
+                    st.session_state['delete_pending'] = None
+                    st.rerun()
+
+
+def staff_queue_page():
+    require_role(actor)
+    hero('Bàn hỗ trợ nhân viên', 'Tiếp nhận → xử lý → phản hồi người dùng. Mọi yêu cầu đều có trạng thái và nhân viên phụ trách.', 'HUMAN-IN-THE-LOOP')
+    filt = st.selectbox('Lọc theo trạng thái', ['Tất cả','pending','in_progress','resolved'])
+    rows = list_handoffs(actor, filt if filt != 'Tất cả' else None)
+    if not rows:
+        st.info('Không có yêu cầu nào phù hợp.')
+    for row in rows:
+        with st.expander(f"{'🟠' if row['status']=='pending' else '🔵' if row['status']=='in_progress' else '🟢'} {row['id']} · {row['customer_name']} · {row['status']}"):
+            st.caption(f"Ngày tạo: {row['created_at']} · Phụ trách: {row['staff_name'] or 'Chưa có'}")
+            st.markdown('**Câu hỏi của khách hàng**')
+            st.write(row['question'])
+            st.markdown('**Câu trả lời AI**')
+            st.write(row['ai_answer'])
+            st.markdown('**Lý do cần kiểm tra**')
+            st.write(row['reason'])
+            source_panel(row['sources'])
+            if row['status'] == 'pending':
+                if st.button('Nhận xử lý', key='take_'+row['id'], type='primary'):
+                    try:
+                        update_handoff(actor, row['id'], 'take')
+                        st.rerun()
+                    except (PermissionError, ValueError) as exc:
+                        st.error(str(exc))
+            elif row['status'] == 'in_progress':
+                if row['staff_id'] == actor['id'] or actor['role'] == 'admin':
+                    with st.form('resolve_'+row['id']):
+                        answer = st.text_area('Phản hồi chính thức', height=110)
+                        submit = st.form_submit_button('Gửi phản hồi & hoàn tất', type='primary')
+                    if submit:
+                        try:
+                            update_handoff(actor, row['id'], 'resolve', answer)
+                            st.rerun()
+                        except (PermissionError, ValueError) as exc:
+                            st.error(str(exc))
+                else:
+                    st.caption('Nhân viên khác đang phụ trách yêu cầu này.')
+            else:
+                st.success('Phản hồi: ' + row['staff_reply'])
+                if actor['role'] == 'admin' and st.button('Mở lại yêu cầu', key='reopen_'+row['id']):
+                    update_handoff(actor, row['id'], 'reopen')
+                    st.rerun()
+
+
+def metrics_page():
+    require_role(actor)
+    hero('Báo cáo hiệu quả dịch vụ', 'Theo dõi tương tác, nhu cầu hỗ trợ và chất lượng phản hồi trên dữ liệu vận hành thực tế.', 'SERVICE ANALYTICS')
+    m = metrics(actor)
+    a,b,c,d = st.columns(4)
+    a.metric('Câu hỏi đã xử lý', m['questions'])
+    b.metric('Chuyển tiếp đề xuất', m['suggested'])
+    c.metric('Chuyển tiếp thực tế', m['actual_handoffs'])
+    d.metric('Đã xử lý xong', m['resolved'])
+    a,b,c = st.columns(3)
+    a.metric('Tỷ lệ đề xuất chuyển', f"{m['suggested_rate']:.1%}")
+    b.metric('Tỷ lệ thực chuyển', f"{m['actual_rate']:.1%}")
+    c.metric('Đánh giá hữu ích / đúng từ người dùng',
+             f"{m['feedback_accuracy']:.1%}" if m['feedback_accuracy'] is not None else 'Chưa có',
+             help='Tính trên những câu trả lời được đánh giá, không phải độ chính xác khách quan.')
+    st.caption('Thời gian giải quyết trung bình: ' +
+               (f"{m['mean_resolution_hours']:.1f} giờ" if m['mean_resolution_hours'] is not None else 'Chưa có') )
+    st.caption(f"Số đánh giá nhận được: {m['feedback_n']}. Chỉ số bằng chứng trung bình: " +
+               (f"{m['mean_evidence']:.1%}" if m['mean_evidence'] is not None else 'Chưa có dữ liệu'))
+    st.info('Các tỷ lệ này là chỉ số vận hành. Muốn kết luận chất lượng RAG cần bộ kiểm thử có đáp án chuẩn và đánh giá chuyên gia.')
+    try:
+        stats = get_collection_stats()
+        st.markdown('#### Kho tri thức hệ thống')
+        a,b = st.columns(2)
+        a.metric('Tài liệu', stats['sources'])
+        b.metric('Đoạn được lập chỉ mục', stats['chunks'])
+    except Exception as exc:
+        st.error('Không truy cập được ChromaDB.')
+
+
+def evaluation_page():
+    require_role(actor)
+    hero('Phòng kiểm định RAG', 'Đánh giá theo tập câu hỏi tham chiếu. So sánh EM, token F1, Recall@K và khả năng chuyển nhân viên.', 'RAG EVALUATION LAB')
+    st.caption('CSV cột bắt buộc: question, reference_answer. Tùy chọn: expected_source, should_handoff (true/false).')
+    fixture = st.file_uploader('Bộ dữ liệu đánh giá CSV (UTF-8)', type=['csv'], key='eval_csv')
+    max_cases = st.slider('Số trường hợp tối đa trong một lượt', 1, 50, 10)
+    if fixture and st.button('Chạy đánh giá', key='eval_run', type='primary'):
+        try:
+            data = fixture.getvalue().decode('utf-8-sig')
+            rows = list(csv.DictReader(io.StringIO(data)))
+            if not rows or not {'question','reference_answer'}.issubset(rows[0]):
+                raise ValueError('Thiếu cột question hoặc reference_answer.')
+            output = []
+            bar = st.progress(0)
+            for i, row in enumerate(rows[:max_cases]):
+                question = str(row.get('question','')).strip()
+                if not question:
+                    continue
+                try:
+                    hits = retrieve_context(question, top_k=5)
+                    prediction, meta = generate_answer(question, hits, model=CFG['model'])
+                    handoff, reason, evidence = should_handoff(hits, meta, min_similarity=.45)
+                    output.append({'question': question, 'prediction': prediction,
+                                   'reference_answer': str(row.get('reference_answer','')),
+                                   'expected_source': str(row.get('expected_source','')).strip(),
+                                   'should_handoff': bool_value(row['should_handoff']) if str(row.get('should_handoff','')).strip() else None,
+                                   'handoff': handoff, 'evidence_score': evidence,
+                                   'hard_handoff': bool(meta.get('no_context') or meta.get('insufficient_evidence') or
+                                                        meta.get('missing_citation') or meta.get('answer_filtered') or not hits),
+                                   'has_citation': bool(hits) and not meta.get('missing_citation',True),
+                                   'hits': hits})
+                except Exception:
+                    st.warning(f'Không xử lý được ca kiểm thử thứ {i+1}.')
+                bar.progress((i+1)/min(len(rows), max_cases))
+            for existing_key in list(st.session_state):
+                if existing_key.startswith('eval_judge_'):
+                    st.session_state.pop(existing_key, None)
+            st.session_state['eval_output'] = output
+        except (ValueError, UnicodeError) as exc:
+            st.error(str(exc))
+    output = st.session_state.get('eval_output')
+    if output:
+        values = evaluate_rows(output)
+        cols = st.columns(4)
+        cols[0].metric('Số mẫu', values['cases'])
+        cols[1].metric('Exact match', f"{values['exact_match']:.1%}")
+        cols[2].metric('Token F1', f"{values['token_f1']:.1%}")
+        cols[3].metric('Tỷ lệ chuyển tiếp', f"{values['handoff_rate']:.1%}")
+        st.write('Tỷ lệ trích dẫn:', f"{values['citation_rate']:.1%}")
+        if values['retrieval_recall_at_k'] is not None:
+            st.write('Retrieval Recall@5:', f"{values['retrieval_recall_at_k']:.1%}")
+        for key in ('handoff_precision','handoff_recall'):
+            if values.get(key) is not None:
+                st.write(key+':', f"{values[key]:.1%}")
+        st.info('EM / token F1 là thước đo trùng khớp chữ, không đủ để kết luận độ đúng ngữ nghĩa. Nên kiểm chứng thêm bằng chuyên gia và bộ câu hỏi có đáp án chuẩn.')
+        threshold = suggest_evidence_threshold(output)
+        if threshold:
+            st.markdown(f"**Ngưỡng chuyển tiếp gợi ý trên tập thử này:** {threshold['threshold']:.0%} "
+                        f"(Precision {threshold['precision']:.1%}; Recall {threshold['recall']:.1%}; F1 {threshold['f1']:.1%})")
+            st.caption('Đây là mức tối ưu trên dữ liệu đang kiểm thử, có nguy cơ overfit. Cần kiểm tra trên tập holdout độc lập trước khi thay ngưỡng vận hành.')
+        st.dataframe([{k:r[k] for k in ('question','reference_answer','prediction','handoff','evidence_score')} for r in output],
+                     use_container_width=True, hide_index=True)
+        with st.expander('Thẩm định thủ công từng câu trả lời (chuyên gia)'):
+            for i, row in enumerate(output):
+                st.selectbox(f"Câu {i+1}: {row['question'][:90]}",
+                             ['Chưa đánh giá','Đúng','Sai'], key='eval_judge_'+str(i))
+        reviewed = [st.session_state.get('eval_judge_'+str(i), 'Chưa đánh giá') for i in range(len(output))]
+        checked = [x for x in reviewed if x != 'Chưa đánh giá']
+        if checked:
+            st.metric('Accuracy do chuyên gia xác nhận',
+                      f"{sum(x == 'Đúng' for x in checked)/len(checked):.1%}")
+            st.caption(f'Đã kiểm tra {len(checked)}/{len(output)} câu; không tính câu chưa đánh giá.')
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=['question','reference_answer','prediction','handoff','evidence_score','expert_label'])
+        writer.writeheader()
+        def safe_csv_cell(value):
+            text = str(value)
+            return "'" + text if text.lstrip().startswith(('=', '+', '-', '@')) else text
+        writer.writerows([{**{k:safe_csv_cell(r[k]) for k in writer.fieldnames if k in r},
+                           'expert_label': reviewed[i]} for i,r in enumerate(output)])
+        st.download_button('Tải kết quả CSV', buf.getvalue().encode('utf-8-sig'),
+                           file_name='rag_evaluation.csv', mime='text/csv')
+
+
+def admin_page():
+    require_role(actor, ('admin',))
+    hero('Quản trị tài khoản', 'Phân quyền nhân viên và kiểm soát truy cập hệ thống.', 'SECURITY & IDENTITY')
+    st.info('Quản trị viên có thể tạo nhân viên trực tiếp; người dùng thông thường tự đăng ký. Không chia sẻ mã mời nhân viên công khai.')
+    with st.form('admin_create_staff'):
+        name = st.text_input('Tên nhân viên', key='admin_name')
+        email = st.text_input('Email nhân viên', key='admin_email')
+        pw = st.text_input('Mật khẩu khởi tạo (ít nhất 12 ký tự)', type='password', key='admin_password')
+        submit = st.form_submit_button('Tạo nhân viên', type='primary')
+    if submit:
+        try:
+            result = create_account(name, email, pw, role='staff', _privileged=True)
+            st.success('Đã tạo tài khoản nhân viên: ' + result['email'])
+        except (ValueError, PermissionError) as exc:
+            st.error(str(exc))
+
+
+def account_page():
+    hero('Tài khoản & bảo mật', 'Cập nhật mật khẩu truy cập và kiểm tra vai trò tài khoản.', 'ACCOUNT SECURITY')
+    st.markdown(f"**Họ tên:** {actor['name']}")
+    st.markdown(f"**Email:** {actor['email']}")
+    st.markdown(f"**Vai trò:** {role_text(actor['role'])}")
+    with st.form('change_own_password'):
+        old = st.text_input('Mật khẩu hiện tại', type='password')
+        new = st.text_input('Mật khẩu mới (ít nhất 12 ký tự)', type='password')
+        new_again = st.text_input('Nhập lại mật khẩu mới', type='password')
+        submitted = st.form_submit_button('Đổi mật khẩu', type='primary')
+    if submitted:
+        if new != new_again:
+            st.error('Mật khẩu mới không trùng nhau.')
+        else:
+            try:
+                change_password(actor, old, new)
+                st.success('Đã đổi mật khẩu. Vui lòng đăng nhập lại.')
+                signout()
+            except (ValueError, PermissionError) as exc:
+                st.error(str(exc))
+
+
+page = st.session_state['page']
+if page == 'Trò chuyện':
+    chat_page()
+elif page == 'Yêu cầu của tôi':
+    requests_page()
+elif page == 'Tài khoản':
+    account_page()
+elif page == 'Kho tài liệu' and is_staff:
+    documents_page()
+elif page == 'Hàng đợi' and is_staff:
+    staff_queue_page()
+elif page == 'Báo cáo' and is_staff:
+    metrics_page()
+elif page == 'Đánh giá' and is_staff:
+    evaluation_page()
+elif page == 'Quản trị' and actor['role'] == 'admin':
+    admin_page()
+else:
+    st.session_state['page'] = 'Trò chuyện'
+    st.rerun()
+
+st.divider()
+st.caption('✦ RAG-AI · Truy xuất có căn cứ · Human-in-the-loop · Quy trình hỗ trợ minh bạch')

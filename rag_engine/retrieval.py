@@ -1,78 +1,88 @@
-"""Dense retrieval, lexical reranking, and MMR-style diversity selection."""
+"""Dense candidate retrieval + lexical fusion + MMR for diversity.
+
+Important: cosine similarity and evidence_score are not calibrated answer accuracy.
+"""
 import re
+from collections import Counter
 from typing import Any
-from .database import get_collection
-from .embeddings import encode_query
 
-def _tokenize_for_matching(text: str) -> set[str]:
-    return {
-        token.casefold()
-        for token in re.findall(r"[^\W_]+", text, flags=re.UNICODE)
-        if len(token) > 1
-    }
 
-def _lexical_similarity(query_tokens: set[str], document: str) -> float:
-    if not query_tokens:
+def tokenize(text: str) -> list[str]:
+    return [s.casefold() for s in re.findall(r'[^\W_]+', text or '', flags=re.UNICODE) if len(s) > 1]
+
+
+def lexical_score(query: str, document: str) -> float:
+    """Weighted query-term coverage; rewards exact phrases in Vietnamese text."""
+    q = tokenize(query)
+    if not q:
         return 0.0
-    document_tokens = _tokenize_for_matching(document)
-    return len(query_tokens & document_tokens) / len(query_tokens)
+    terms = Counter(q)
+    doc_terms = Counter(tokenize(document))
+    coverage = sum(min(cnt, doc_terms.get(term, 0)) for term, cnt in terms.items()) / sum(terms.values())
+    phrase = ' '.join(q)
+    normalized = ' '.join(tokenize(document))
+    phrase_bonus = 0.15 if len(q) > 1 and phrase in normalized else 0.0
+    return min(1.0, coverage + phrase_bonus)
 
-def retrieve_context(
-    query: str, top_k: int = 5, min_similarity: float = 0.25
-) -> list[dict[str, Any]]:
+
+def evidence_score(similarity: float, lexical: float) -> float:
+    """Heuristic relevance index for UI and triage, NOT probability of correctness.
+
+    Mapping is deliberately documented so it can be retuned against labeled data.
+    """
+    semantic_signal = max(0.0, min(1.0, (similarity - 0.20) / 0.45))
+    return round(max(0.0, min(1.0, 0.6 * semantic_signal + 0.4 * lexical)), 4)
+
+
+def rerank_candidates(query: str, candidates: list[dict[str, Any]], top_k=5) -> list[dict]:
+    q_tokens = set(tokenize(query))
+    processed = []
+    for c in candidates:
+        hit = dict(c)
+        cosine = max(0.0, min(1.0, float(hit.get('similarity', 0))))
+        lexical = lexical_score(query, str(hit.get('text', '')))
+        hit['lexical_similarity'] = lexical
+        hit['evidence_score'] = evidence_score(cosine, lexical)
+        hit['retrieval_score'] = 0.62 * cosine + 0.38 * lexical
+        processed.append(hit)
+    # MMR penalizes repeated near-duplicate text; preserves distinct relevant pages.
+    selected, remaining = [], processed
+    while remaining and len(selected) < top_k:
+        def score(item):
+            t = set(tokenize(item.get('text', '')))
+            redundancy = max((len(t & set(tokenize(s.get('text', '')))) / max(1, len(t | set(tokenize(s.get('text', ''))))) for s in selected), default=0.0)
+            query_presence = len(t & q_tokens) / max(1, len(q_tokens))
+            return 0.80 * item['retrieval_score'] + 0.10 * query_presence - 0.10 * redundancy
+        winner = max(range(len(remaining)), key=lambda i: score(remaining[i]))
+        selected.append(remaining.pop(winner))
+    return selected
+
+
+def retrieve_context(query: str, top_k: int = 5, min_similarity: float = 0.0) -> list[dict]:
     query = query.strip()
     if not query:
         return []
-    if top_k < 1:
-        raise ValueError("top_k phải lớn hơn 0.")
-    if not 0.0 <= min_similarity <= 1.0:
-        raise ValueError("min_similarity phải nằm trong khoảng từ 0 đến 1.")
-
+    if not 1 <= top_k <= 30 or not 0 <= min_similarity <= 1:
+        raise ValueError('Tham số truy xuất không hợp lệ.')
+    from .database import get_collection
+    from .embeddings import encode_query
     collection = get_collection()
     count = collection.count()
-    if count == 0:
+    if not count:
         return []
-
-    result = collection.query(
-        query_embeddings=[encode_query(query)],
-        n_results=min(max(top_k * 4, top_k), count),
-        include=["documents", "metadatas", "distances"],
-    )
+    result = collection.query(query_embeddings=[encode_query(query)],
+                              n_results=min(max(8 * top_k, 30), count),
+                              include=['documents', 'metadatas', 'distances'])
     candidates = []
-    query_tokens = _tokenize_for_matching(query)
-    docs = result.get("documents", [[]])[0]
-    metas = result.get("metadatas", [[]])[0]
-    distances = result.get("distances", [[]])[0]
-
-    for doc, meta, distance in zip(docs, metas, distances):
-        similarity = max(0.0, min(1.0, 1.0 - float(distance)))
-        if similarity < min_similarity:
+    for doc, meta, distance in zip(result.get('documents', [[]])[0],
+                                   result.get('metadatas', [[]])[0],
+                                   result.get('distances', [[]])[0]):
+        cosine = max(0.0, min(1.0, 1.0 - float(distance)))
+        if cosine < min_similarity:
             continue
-        lexical = _lexical_similarity(query_tokens, doc or "")
         meta = meta or {}
-        candidates.append({
-            "text": doc, "source": meta.get("source", "Tài liệu không rõ"),
-            "page": meta.get("page", "?"), "chunk": meta.get("chunk", "?"),
-            "similarity": similarity, "lexical_similarity": lexical,
-            "retrieval_score": 0.8 * similarity + 0.2 * lexical,
-            "source_id": meta.get("source_id", ""),
-        })
-
-    selected, remaining = [], candidates[:]
-    while remaining and len(selected) < top_k:
-        best_index, best_score = 0, float("-inf")
-        for index, candidate in enumerate(remaining):
-            candidate_tokens = _tokenize_for_matching(candidate["text"] or "")
-            redundancy = max(
-                (
-                    len(candidate_tokens & _tokenize_for_matching(prev["text"] or ""))
-                    / max(1, len(candidate_tokens))
-                    for prev in selected
-                ),
-                default=0.0,
-            )
-            score = 0.8 * candidate["retrieval_score"] - 0.2 * redundancy
-            if score > best_score:
-                best_index, best_score = index, score
-        selected.append(remaining.pop(best_index))
-    return selected
+        candidates.append({'text': doc or '', 'source': meta.get('source', 'Không rõ'),
+                           'source_id': meta.get('source_id', ''),
+                           'page': meta.get('page', 0), 'chunk': meta.get('chunk', 0),
+                           'similarity': cosine})
+    return rerank_candidates(query, candidates, top_k)
