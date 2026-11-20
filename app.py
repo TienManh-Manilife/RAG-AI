@@ -231,7 +231,7 @@ def render_history(conversation_id):
     last_user = ''
     for message in messages:
         role = message['role']
-        with st.chat_message(role, avatar='✦' if role == 'assistant' else '👤'):
+        with st.chat_message(role):
             st.markdown(message['content'])
             if role == 'user':
                 last_user = message['content']
@@ -352,11 +352,18 @@ def chat_page():
                 add_message(actor, conv_id, 'assistant', answer, hits=hits,
                             evidence_score=score, needs_handoff=escalate, reason=reason)
                 log_event(actor, mode, score, escalate)
-        except Exception:
-            # Details may include server URLs, credentials or library internals.
-            add_message(actor, conv_id, 'assistant',
-                        'Hệ thống tạm thời chưa xử lý được câu hỏi. Vui lòng thử lại hoặc liên hệ nhân viên.',
-                        evidence_score=0, needs_handoff=True, reason='Lỗi xử lý / kết nối dịch vụ')
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+
+            add_message(
+                actor, conv_id, 'assistant',
+                'Hệ thống tạm thời chưa xử lý được câu hỏi. '
+                'Vui lòng thử lại hoặc liên hệ nhân viên.',
+                evidence_score=0,
+                needs_handoff=True,
+                reason='Lỗi xử lý / kết nối dịch vụ'
+            )
             log_event(actor, mode, 0, True)
         st.rerun()
 

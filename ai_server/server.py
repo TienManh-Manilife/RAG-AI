@@ -10,11 +10,12 @@ from typing import Any
 import requests
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
+from .a import API
 
 app = FastAPI(title='RAG-AI Inference Gateway', docs_url=None, redoc_url=None)
 
 OLLAMA_URL = os.getenv('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
-GATEWAY_KEY = os.getenv('AI_SERVER_API_KEY', '')
+GATEWAY_KEY = API
 MODEL = os.getenv('AI_SERVER_MODEL', 'qwen3:4b')
 
 
