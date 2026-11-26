@@ -1,0 +1,10 @@
+# Optional NVIDIA GPU support if Docker Desktop and NVIDIA runtime are configured.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
