@@ -1,152 +1,204 @@
-# ✦ RAG–AI Enterprise — Hỏi đáp tài liệu có hỗ trợ nhân viên
+# An Phát Demo – Trợ lý chăm sóc khách hàng RAG (Docker Local)
 
-**Mục tiêu đồ án:** chatbot dùng dữ liệu quy chế đào tạo / chính sách bảo hành thực tế, chuyển nhân viên khi thiếu căn cứ; đo chất lượng tra cứu, tỷ lệ chuyển tiếp và phân tích Human-in-the-loop.
+> **Đồ án nghiên cứu, 100% dữ liệu doanh nghiệp giả lập.** Tên An Phát, chính sách, email `.example` và các chỉ tiêu trong `knowledge_base/` không phải thông tin của doanh nghiệp thực. Không nên dùng để quyết định quyền lợi thực tế.
 
-## 1. Tính năng
-
-- Đăng ký, đăng nhập cổng người dùng/nhân viên; quản trị viên được bootstrap bằng secret khi **CSDL hoàn toàn trống**.
-- Password PBKDF2-HMAC-SHA256 (600.000 vòng + salt), khóa tài khoản 15 phút sau 5 lần đăng nhập sai; role `user`, `staff`, `admin`.
-- Nhân viên chỉ đăng ký bằng **mã mời bí mật** (tối thiểu 12 ký tự), hoặc do admin tạo. Người dùng không truy cập trang quản trị/kho chung/hàng đợi.
-- RAG chế độ **Kho hệ thống** (ChromaDB, nhân viên quản lý) và **Tài liệu riêng** (PDF/DOCX/TXT; vector embedding trong session, không ghi vào Chroma chung).
-- Chat có lịch sử riêng theo tài khoản, hỗ trợ truy vấn tiếp nối ngữ cảnh, phản hồi hữu ích/chưa đúng, nguồn tham khảo theo trang.
-- Đề xuất chuyển tiếp dựa trên điểm bằng chứng, tình trạng thiếu căn cứ, lời từ chối và trích dẫn; người dùng có thể chuyển bất cứ câu trả lời nào.
-- Nhân viên nhận xử lý, phản hồi, đóng phiếu; quản trị được mở lại.
-- Dashboard hiển thị tổng số câu hỏi, số đề xuất chuyển, số chuyển thật, tỷ lệ, thời gian xử lý và phản hồi người dùng.
-- Bộ đánh giá CSV: exact match, token F1, Retrieval Recall@5 (nếu có `expected_source`), citation rate, precision/recall chuyển tiếp (nếu có nhãn), gợi ý ngưỡng trên tập đánh giá và thẩm định thủ công từng câu bởi chuyên gia.
-
-## 2. Cấu trúc
+## 1. Kiến trúc
 
 ```text
-app.py                       # UI Streamlit
-rag_engine/
-  auth.py                    # SQLite users / password / roles
-  service.py                 # Conversations, queue, events, feedback
-  config.py                  # Cấu hình & secrets
-  retrieval.py               # Dense candidate retrieval + lexical rerank + MMR
-  private_docs.py            # Tài liệu riêng của session
-  embeddings.py              # SentenceTransformer
-  database.py                # ChromaDB persistent store
-  ingestion.py               # Nạp PDF kho chung
-  sources.py                 # Quản lý nguồn hệ thống
-  generation.py              # Prompt grounded + AI gateway
-  handoff.py                 # Quy tắc đề xuất chuyển tiếp
-  evaluation.py              # Metric đánh giá tham chiếu
-  text_processing.py         # PDF extraction/chunking
-ai_server/server.py          # Gateway FastAPI cho Ollama (mới)
-requirements.txt
-requirements-server.txt
-.streamlit/secrets.toml.example
-.env.example
-evaluation/sample_questions.csv
+Trình duyệt trên máy (http://localhost:8501)
+  ↓ [localhost only]
+Streamlit /app trong Docker  [Xác thực, phân quyền, hội thoại, phiếu]
+  ├── SQLite /app/data/  [Tài khoản, hội thoại, phiếu, tài liệu, embedding, KPI]
+  │     └── Truy xuất hybrid BM25 + BGE-M3 cosine + reciprocal rank fusion
+  └── Ollama http://ollama:11434 (mạng Docker nội bộ)
+        ├── qwen3:4b     [Sinh câu trả lời JSON kèm trích dẫn]
+        └── bge-m3       [Vector embedding đa ngôn ngữ]
 ```
 
-## 3. Cài đặt (Windows PowerShell)
+Không có **Cloudflare**, **FastAPI Gateway**, API key gateway hoặc cổng Ollama công khai. Trình duyệt chỉ kết nối Streamlit tại `127.0.0.1:8501` trên máy chủ. Dữ liệu được giữ trong các **Docker named volumes**.
+
+## 2. Yêu cầu
+
+- Windows 10/11 + Docker Desktop (WSL2), hoặc Linux/macOS có Docker Engine + Docker Compose v2.
+- Internet **lúc cài lần đầu** để tải Docker images và hai mô hình Ollama; sau khi mô hình đã tải, suy luận diễn ra nội bộ.
+- Khuyến nghị tối thiểu 8 GB RAM còn trống cho trải nghiệm CPU; 16 GB trở lên thuận lợi hơn. Model Qwen3 4B chạy CPU có thể chậm; không đảm bảo thời gian đáp ứng cố định.
+- Dung lượng đĩa còn trống tối thiểu khoảng 8–12 GB cho image, mô hình và cache, phụ thuộc tag thực tế.
+
+## 3. Cài đặt trên PowerShell
+
+Giải nén dự án. Mở PowerShell tại thư mục chứa `docker-compose.yml`:
 
 ```powershell
-git clone <URL_REPO_CUA_BAN>
-cd RAG-AI
-py -3.11 -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+# Tạo tài khoản admin ban đầu bằng mật khẩu ngẫu nhiên, không sửa trong mã nguồn
+.\scripts\setup.ps1
+
+# Khởi động cả Streamlit và Ollama (tự kéo 2 model lần đầu)
+docker compose up -d --build
+
+# Xem quá trình tải mô hình và lập chỉ mục
+docker compose logs -f pull-models app
 ```
 
-- Nên dùng Python 3.11. Lần đầu chạy sẽ tải embedding model từ Hugging Face nếu thiếu `embedding_model/`.
-- Streamlit Cloud không chạy được model Ollama trên máy cá nhân nếu không có gateway công khai (ví dụ Cloudflare Tunnel).
-- PDF scan chỉ chứa ảnh không hỗ trợ OCR trong bản này; OCR trước khi nạp.
+Script `setup.ps1` tạo `.env` một lần, in mật khẩu admin để chủ máy lưu lại. Email mặc định là `admin@anphat.local`. **Không chia sẻ file `.env` hoặc mật khẩu.** Nếu đã có `.env`, script không ghi đè.
 
-### Chạy AI gateway trên máy cài Ollama
+Mở **http://localhost:8501**. Đăng nhập admin bằng email và mật khẩu vừa tạo. Vào **Quản trị** để tạo tài khoản nhân viên. Khách hàng tự đăng ký tại màn hình đăng nhập.
+
+Nếu không muốn dùng script trên Windows, hãy copy `.env.example` thành `.env` và **thay** `BOOTSTRAP_ADMIN_PASSWORD` bằng mật khẩu ngẫu nhiên dài ít nhất 12 ký tự, không bắt đầu bằng `REPLACE_`, `CHANGE_`, `YOUR_`.
+
+### GPU NVIDIA (tùy chọn)
+
+Nếu Docker Desktop/WSL2 đã hỗ trợ NVIDIA Container Toolkit:
 
 ```powershell
-pip install -r requirements-server.txt
-ollama pull qwen3:4b
-# Nếu Ollama chưa tự chạy: mở terminal khác rồi gõ: ollama serve
-$env:AI_SERVER_API_KEY = "YOUR_NEW_LONG_RANDOM_KEY_AT_LEAST_24_CHARS"
-$env:AI_SERVER_MODEL = "qwen3:4b"
-python -m uvicorn ai_server.server:app --host 127.0.0.1 --port 8000
+docker compose -f docker-compose.yml -f compose.gpu.yml up -d --build
 ```
 
-Kiểm tra `http://127.0.0.1:8000/health`. Đặt `AI_SERVER_API_KEY` này giống khóa trong Streamlit Secrets. Nếu dùng Streamlit Cloud, đưa gateway ra HTTPS qua tunnel **và chỉ công bố gateway FastAPI, không công bố cổng Ollama**.
+Không dùng file GPU nếu máy không có GPU NVIDIA được hỗ trợ.
 
-### Cấu hình ứng dụng Streamlit
+## 4. Các vai trò và nghiệp vụ
+
+| Vai trò | Phạm vi |
+|---|---|
+| Khách hàng | Tự đăng ký/đăng nhập, chat nguồn được duyệt, xem lịch sử của mình, phản hồi hữu ích, theo dõi và mở lại phiếu đã hoàn thành, đổi mật khẩu |
+| Nhân viên | Tất cả nghiệp vụ tra cứu nội bộ, **upload/cập nhật/xóa tài liệu**, phân quyền nguồn customer/staff, tạo embedding, nhận và xử lý phiếu, phản hồi, xem KPI và đánh giá |
+| Quản trị viên | Nghiệp vụ nhân viên, tạo tài khoản staff, khóa/mở tài khoản khác |
+
+Cơ chế bắt buộc trên tầng dữ liệu: khách không thể gọi API Python để tải tài liệu hay đọc chunk `staff`; truy vấn được lọc *trước* bước truy xuất. Khách không đọc hội thoại hoặc phiếu của người khác.
+
+**Chuyển tiếp người–máy:** khi phát hiện yêu cầu xác minh giao dịch cá nhân, không tìm được nguồn, điểm liên quan thấp, mô hình xác nhận thiếu căn cứ, thiếu trích dẫn hoặc dịch vụ AI lỗi, hệ thống **tự mở phiếu**. Nhân viên nhận phiếu → xác minh → trả lời → đóng. Khách theo dõi và có thể mở lại phiếu.
+
+## 5. Kho tri thức
+
+`knowledge_base/manifest.json` mô tả danh sách tài liệu và phân quyền:
+
+- 14 tài liệu chính sách khách hàng: đặt hàng, vận chuyển, bảo hành, đổi trả, hoàn tiền, thanh toán, hóa đơn, tài khoản, dữ liệu cá nhân, kỹ thuật, bảo trì, ưu đãi, khiếu nại và hướng dẫn dịch vụ.
+- 01 tài liệu hướng dẫn nghiệp vụ nội bộ, chỉ staff.
+- 01 PDF nội quy nhân sự **giả lập** kế thừa từ dự án gốc, chỉ staff.
+
+Tài liệu seed chỉ được nạp **một lần** khi cơ sở dữ liệu được tạo. Sau đó nhân viên có thể xóa, cập nhật và thêm tài liệu; việc xóa không bị seed đè trở lại vào mỗi lần reload. Tải lên hỗ trợ PDF/DOCX/TXT/MD tối đa 15 MB. PDF scan phải OCR trước.
+
+Cập nhật embedding thủ công: vào `Kho tài liệu` → `Cập nhật tất cả embedding còn thiếu`, hoặc chạy:
 
 ```powershell
-Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
+docker compose exec app python -m rag_engine.cli reindex
 ```
 
-Sửa `.streamlit/secrets.toml` (không commit file này):
+Khi Docker chạy lần đầu, `app` tự bootstrap kho và lập chỉ mục BGE-M3 trước khi mở giao diện. Nếu GPU yếu/CPU chậm, startup có thể lâu; xem `docker compose logs -f app`.
 
-```toml
-[ai_server]
-base_url = "http://127.0.0.1:8000" # Với Streamlit Cloud: URL HTTPS tunnel
-api_key = "SAME_LONG_KEY_AS_AI_SERVER_API_KEY"
-model = "qwen3:4b"
+## 6. Kiểm thử và đánh giá
 
-[auth]
-bootstrap_admin_email = "admin@yourdomain.com"
-bootstrap_admin_password = "LONG_UNIQUE_ADMIN_PASSWORD"
-bootstrap_admin_name = "System Administrator"
-staff_invite_code = "SECRET_STAFF_INVITE_CODE_AT_LEAST_12_CHARS"
-```
+`benchmark/questions_50.csv` và `questions_50.jsonl` chứa **50 câu hỏi gắn nhãn**, gồm **40 có căn cứ** và **10 thiếu căn cứ/cần chuyển tiếp**.
+
+### Kiểm tra trực tiếp Ollama/RAG trước benchmark
 
 ```powershell
-streamlit run app.py
+docker compose exec app python scripts/smoke_test.py
 ```
 
-Mở `http://localhost:8501`.
+### Chạy nhanh: chỉ kiểm tra retrieval
 
-**Cảnh báo khi triển khai Streamlit Cloud:** `data/` trên đĩa của Streamlit Cloud có thể bị **mất khi restart/redeploy**, không đảm bảo nhiều replica truy cập cùng SQLite/Chroma. Muốn triển khai thực tế và lưu dữ liệu bền vững, phải dùng PostgreSQL cho tài khoản/phiếu/chat và vector DB persistent (Chroma server/pgvector/Qdrant) thay cho SQLite/Chroma local. **Không đưa dữ liệu thật nhạy cảm lên cloud thử nghiệm** nếu chưa có quy trình bảo vệ và quyền truy cập phù hợp. Nếu sử dụng nhiều worker, cần rate-limit bằng shared store, xác thực phiên, CSRF/session hardening, email verification/reset password, logging kiểm toán và backup. Bản này hướng đến đồ án/demo có một instance, không phải hệ thống production đã qua kiểm toán bảo mật.
+```powershell
+docker compose exec app python -m rag_engine.benchmark --retrieval-only
+# So sánh baseline chỉ từ khóa, không gọi embedding:
+docker compose exec app python -m rag_engine.benchmark --retrieval-only --lexical-only
+```
 
-## 4. Quy trình nghiệp vụ
+### Chạy end-to-end 50 câu với Ollama thực
 
-1. Admin đăng nhập qua cổng nhân viên bằng email/password bootstrap; nếu CSDL đã có tài khoản thì bootstrap admin không được chạy lại.
-2. Admin tạo nhân viên, hoặc nhân viên đăng ký bằng mã mời. Khách hàng tự đăng ký.
-3. Nhân viên mở **Kho tài liệu hệ thống** và nhập PDF thực tế; hệ thống lấy chữ, chia chunk và lập chỉ mục.
-4. Người dùng hỏi đáp theo **Kho hệ thống** hoặc nạp riêng PDF/DOCX/TXT rồi chuyển sang **Tài liệu tải lên**.
-5. Hệ thống truy xuất các đoạn gần nhất, rerank theo từ khóa, chọn nguồn đa dạng và gọi AI Gateway tạo câu trả lời có trích dẫn.
-6. Nếu câu trả lời không có căn cứ, nguồn yếu hoặc không có trích dẫn, hệ thống _đề xuất_ chuyển nhân viên. Người dùng nhấn **Chuyển nhân viên** để _thực sự tạo phiếu_.
-7. Nhân viên vào Hàng đợi, nhấn **Nhận xử lý** → nhập phản hồi → **Hoàn tất**. Người dùng đọc phản hồi ở lịch sử chat và **Yêu cầu của tôi**.
-8. Nhân viên xem **Báo cáo** hoặc **Đánh giá** để thu số liệu đồ án.
+```powershell
+docker compose exec app python -m rag_engine.benchmark
+```
 
-## 5. Giải thích điểm tin cậy
-
-**Không lấy cosine similarity làm xác suất đúng.** Giá trị cosine `0.45` hoàn toàn không có nghĩa câu trả lời đúng 45%. Chỉ số mới:
+Hoặc đăng nhập nhân viên vào **Kiểm thử RAG** → chọn `End-to-end` → `50 câu` → chạy. Kết quả thực tế được ghi trong volume `app_data`:
 
 ```text
-semantic_signal = clip((cosine - 0.20) / 0.45, 0, 1)
-evidence_index = 0.60 * semantic_signal + 0.40 * lexical_coverage
+/app/data/reports/benchmark_latest.json
+/app/data/reports/benchmark_latest.csv
 ```
 
-`lexical_coverage` là tỷ lệ từ khóa câu hỏi có mặt trong chunk (có thưởng cho chuỗi liên tục). Công thức là **heuristic công khai, chưa hiệu chỉnh**, dùng để xếp hạng và ra quyết định cần xem xét. Nếu không có kiểm định trên dữ liệu gắn nhãn thì **không được gọi 75% bằng chứng là 75% chính xác**. Mặc định đề xuất chuyển nếu evidence index dưới 0,45, câu trả lời thiếu trích dẫn hoặc nêu thiếu căn cứ. Để tối ưu ngưỡng theo lĩnh vực, tạo ít nhất 100–200 cặp câu hỏi có đáp án thực và câu hỏi cố ý ngoài tài liệu; tối ưu theo precision/recall của chuyển tiếp và mức rủi ro trả lời sai.
-
-## 6. Đánh giá theo đề bài
-
-Tạo file CSV (UTF-8) theo mẫu `evaluation/sample_questions.csv` với cột bắt buộc `question,reference_answer` và tùy chọn `expected_source,should_handoff`. Vào tài khoản nhân viên > **Đánh giá RAG**, nạp CSV, chọn số mẫu, chạy. Sau đó mở phần **Thẩm định thủ công** để đánh dấu Đúng / Sai và tải CSV có nhãn chuyên gia. Công cụ có thể gợi ý ngưỡng phân luồng trên ít nhất 10 câu gắn nhãn đủ cả hai lớp; cần kiểm tra lại ngưỡng trên tập holdout độc lập.
-
-- Exact match / token F1: proxy về độ giống chữ, không thay thế đánh giá ngữ nghĩa.
-- Retrieval Recall@5: tỷ lệ câu hỏi có ít nhất một nguồn đúng trong top 5, nếu có nhãn nguồn.
-- Handoff precision/recall: đánh giá khả năng đề xuất chuyển tiếp dựa trên `should_handoff`.
-- Suggested handoff rate = số câu đề xuất chuyển / số câu hỏi; Actual handoff rate = số phiếu thật sự mở / số câu hỏi (có thể bị ảnh hưởng bởi hành vi khách hàng).
-- Dashboard feedback accuracy: tỷ lệ người dùng đánh giá hữu ích, chịu selection bias.
-- Nên thêm đánh giá thủ công: tính đúng sự kiện, đủ thông tin, chất lượng trích dẫn, nguy cơ trả lời không có căn cứ; báo cáo số lượng mẫu và khoảng tin cậy.
-
-## 7. Giới hạn và lưu ý an toàn
-
-- Upload ở chế độ riêng được giữ trong RAM của **Streamlit session**, không làm nhiễm kho chung và không lưu nội dung PDF gốc xuống đĩa. Khi phiên kết thúc/restart, cần nạp lại; lịch sử câu hỏi/trả lời vẫn ở SQLite. Dữ liệu của chế độ riêng **vẫn được gửi tới AI Gateway** để tạo câu trả lời.
-- Trích dẫn kiểm tra bằng mẫu/nguồn (heuristic), **không phải** kiểm định entailment ngữ nghĩa. Mô hình có thể trích đúng nguồn nhưng diễn giải sai. Cần đánh giá chuyên gia trước khi dùng trong quyết định quyền lợi.
-- ChromaDB thực hiện dense candidate search rồi rerank từ khóa + MMR, **chưa phải** full-corpus sparse retrieval/BM25. Muốn mở rộng kho lớn nên thêm sparse index thực sự và cross-encoder reranker.
-- Việc xóa/tái lập chỉ mục chưa có transaction xuyên SQLite và Chroma. Không chạy đồng thời hai lần nạp cùng tài liệu.
-- Để nhập liệu có dấu/phức tạp, ưu tiên PDF dạng text; OCR là quy trình riêng.
-- Không nhúng khóa truy cập hoặc mật khẩu vào source code; thay khóa nếu nghi ngờ lộ.
-
-## 8. Kiểm thử
+Muốn sao chép báo cáo ra máy:
 
 ```powershell
-pip install pytest
-python -m pytest tests -q
-python -m compileall -q app.py rag_engine ai_server
+docker compose cp app:/app/data/reports/benchmark_latest.json .\benchmark_latest.json
+docker compose cp app:/app/data/reports/benchmark_latest.csv .\benchmark_latest.csv
 ```
 
-Các unit test không cần mô hình Ollama, mạng, ChromaDB hay Streamlit. Phần chạy trực tiếp trên Streamlit và AI Gateway cần được kiểm tra tích hợp trong môi trường có đủ dependencies.
+**Các thước đo:**
 
-**Nâng cấp dữ liệu từ phiên bản cũ:** Giữ `data/chroma/` cùng tên collection và cùng embedding model để tái sử dụng vector (nếu tương thích phiên bản Chroma). Không tự động nhập `handoff_requests.json`/`metrics.json` cũ vì bản JSON không có định danh người dùng đã xác thực; cần gắn chủ sở hữu hợp lệ trước khi import để tránh lộ thông tin giữa các tài khoản.
+- **Retrieval Recall@5**: tỷ lệ câu có căn cứ mà nguồn chuẩn nằm trong 5 đoạn truy xuất.
+- **Handoff rate**: số câu AI đề nghị nhân viên / số câu xử lý thực tế.
+- **Handoff precision / recall / F1**: đánh giá quyết định chuyển tiếp với 10 nhãn cần chuyển và 40 nhãn không cần chuyển.
+- **Citation rate**: tỷ lệ câu được trả lời có trích dẫn hợp lệ.
+- **Keyphrase coverage**: mức có mặt của các thông tin trọng yếu trong câu trả lời; *chỉ là proxy*, không thay thế thẩm định đúng/sai ngữ nghĩa.
+- **Loại lỗi**: retrieval miss, false handoff, missed handoff, missing citation, keyphrase mismatch, system error.
+- **KPI hoạt động**: tỷ lệ chuyển đề xuất, tỷ lệ phiếu thực tế, thời gian đóng, phản hồi khách hàng.
+
+Đánh giá khoa học nên bổ sung người chấm độc lập trên câu hỏi do người khác biên soạn, dùng một tập validation để chọn ngưỡng rồi kiểm tra trên hold-out. **Không được gọi `evidence_score` là xác suất câu trả lời đúng.**
+
+Chạy unit tests ngoài Docker (nếu có Python 3.11):
+
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
+
+Hoặc chạy trong Docker (dùng một container test tạm, không động vào image production):
+
+```powershell
+docker compose run --rm --no-deps --user root app sh -c "pip install -r requirements-dev.txt && python -m pytest -q tests"
+```
+
+## 7. Vận hành, bảo trì và sao lưu
+
+```powershell
+# Trạng thái các dịch vụ
+docker compose ps
+# Log ứng dụng
+docker compose logs --tail 100 app
+# Log mô hình
+docker compose logs --tail 100 ollama
+# Các model trong Ollama
+docker compose exec ollama ollama list
+# Cập nhật container sau khi chỉnh code
+docker compose up -d --build
+# Dừng hệ thống nhưng GIỮ dữ liệu
+docker compose down
+```
+
+Không sử dụng `docker compose down -v` nếu muốn giữ tài khoản, hội thoại, tài liệu và mô hình đã tải; `-v` **xóa các Docker volumes liên quan**. Để sao lưu, dùng script `scripts/backup.ps1` khi ứng dụng đã dừng, hoặc sao chép backup SQLite qua container sau khi bảo đảm không còn tiến trình ghi. Không phát hành dữ liệu thử nghiệm có PII thật.
+
+### Lỗi thường gặp
+
+- **Không thấy ứng dụng**: chạy `docker compose ps` và `docker compose logs app`. Lần đầu phải tải hai mô hình và tạo embedding.
+- **Container pull-models failed**: kiểm tra Internet, DNS, dung lượng, chạy lại `docker compose up -d`.
+- **AI offline**: kiểm tra `docker compose exec ollama ollama list`, xem có `qwen3:4b` và `bge-m3`.
+- **Hết bộ nhớ**: tăng giới hạn RAM Docker/WSL2 hoặc sử dụng máy mạnh hơn; Qwen3 4B có thể chậm trên CPU.
+- **Đã sửa file .env nhưng admin cũ không đổi mật khẩu**: bootstrap admin chỉ tạo khi DB chưa có tài khoản. Đổi mật khẩu ở mục Tài khoản khi đã đăng nhập. Không xóa dữ liệu chỉ để đặt lại mật khẩu.
+- **Ứng dụng báo chưa đủ bằng chứng**: xem báo cáo `retrieval_hit_at_5`, kiểm tra scope tài liệu, bổ sung/chỉnh tài liệu và chạy `reindex`.
+
+## 8. Giới hạn hiện tại
+
+- Chưa đánh giá end-to-end với Ollama trên hệ thống đích vì môi trường biên soạn không có Docker daemon/Ollama; phải chạy benchmark trên máy người dùng để có số liệu trả lời thực tế.
+- Mô hình có thể sinh câu nghe hợp lý nhưng chưa được tài liệu hỗ trợ. Kiểm tra JSON/citation và chuyển tiếp giảm rủi ro **không bảo đảm loại bỏ hoàn toàn hallucination**.
+- Bộ 50 câu dựa trên tài liệu demo, dễ hơn tình huống khách hàng thực. Chấm điểm tự động theo từ khóa không phản ánh hoàn toàn ngữ nghĩa, cần thẩm định chuyên gia.
+- Ứng dụng là demo local-only, không có xác minh email, MFA, backup tự động hoặc HTTPS đầu cuối; không nên triển khai Internet hay sử dụng dữ liệu thật khi chưa hoàn thiện bảo mật.
+
+## 9. Tệp chính
+
+```text
+app.py                     Streamlit UI, role pages
+rag_engine/auth.py          Người dùng, xác thực, admin
+rag_engine/service.py       Hội thoại, chuyển tiếp, feedback, metrics
+rag_engine/documents.py     PDF/DOCX/TXT/MD, scope customer/staff
+rag_engine/retrieval.py     BM25 + BGE-M3 + RRF
+rag_engine/generation.py    JSON grounding, citation validation
+rag_engine/pipeline.py      Chat và evaluation dùng chung
+rag_engine/handoff.py       Ngưỡng và quy tắc cần nhân viên
+rag_engine/benchmark.py     Benchmark 50 câu, phân tích lỗi, CSV+JSON
+knowledge_base/             16 tài liệu giả lập
+benchmark/                  50 câu + báo cáo baseline retrieval
+Dockerfile, docker-compose.yml, compose.gpu.yml
+scripts/setup.ps1           Tạo file cấu hình admin nội bộ
+```
+
+**Nguồn kỹ thuật:** Ollama Docker image: https://hub.docker.com/r/ollama/ollama/ ; Ollama embeddings: https://docs.ollama.com/api/embed ; BGE-M3 multilingual: https://ollama.com/library/bge-m3 .

@@ -1,88 +1,97 @@
-"""Dense candidate retrieval + lexical fusion + MMR for diversity.
-
-Important: cosine similarity and evidence_score are not calibrated answer accuracy.
+"""Hybrid BM25 (Vietnamese normalized) + Ollama bge-m3 dense retrieval.
+All candidate filtering, including staff-only sources, happens BEFORE similarity scoring.
+Relevance index is NOT a calibrated probability of answer correctness.
 """
+from __future__ import annotations
+import json
+import math
 import re
+import unicodedata
 from collections import Counter
-from typing import Any
+from .documents import authorized_chunks
+from .config import EMBED_MODEL
 
+STOPWORDS = set('là có được của cho với các những một về tôi bạn công ty ở tại như nào nhiêu khi nếu từ để thì và hoặc hay theo trong không muốn cần việc hỏi thế nào có thể giúp làm'.split())
+SYNONYMS = {'ship':'giao', 'shipper':'giao', 'order':'đơn', 'refund':'hoàn', 'hủy':'huỷ',
+            'đổi':'đổi', 'lỗi':'lỗi', 'bill':'hóa', 'hoá':'hóa', 'invoice':'hóa',
+            'bảo':'bảo', 'hành':'hành', 'ticket':'yêu', 'hotline':'điện', 'feedback':'khiếu'}
 
-def tokenize(text: str) -> list[str]:
-    return [s.casefold() for s in re.findall(r'[^\W_]+', text or '', flags=re.UNICODE) if len(s) > 1]
+def fold(text):
+    text = (text or '').casefold().replace('đ','d')
+    return ''.join(c for c in unicodedata.normalize('NFD', text) if not unicodedata.combining(c))
 
+def tokenize(text):
+    words = re.findall(r'[a-z0-9]+', fold(text))
+    return [SYNONYMS.get(t,t) for t in words if t not in STOPWORDS and len(t) > 1]
 
-def lexical_score(query: str, document: str) -> float:
-    """Weighted query-term coverage; rewards exact phrases in Vietnamese text."""
+def cosine(a,b):
+    if not a or not b or len(a)!=len(b): return 0.0
+    dot=sum(x*y for x,y in zip(a,b))
+    na=math.sqrt(sum(x*x for x in a))
+    nb=math.sqrt(sum(y*y for y in b))
+    return dot/(na*nb) if na*nb else 0.0
+
+def _lexical(query, texts):
+    docs = [Counter(tokenize(t)) for t in texts]
     q = tokenize(query)
-    if not q:
-        return 0.0
-    terms = Counter(q)
-    doc_terms = Counter(tokenize(document))
-    coverage = sum(min(cnt, doc_terms.get(term, 0)) for term, cnt in terms.items()) / sum(terms.values())
-    phrase = ' '.join(q)
-    normalized = ' '.join(tokenize(document))
-    phrase_bonus = 0.15 if len(q) > 1 and phrase in normalized else 0.0
-    return min(1.0, coverage + phrase_bonus)
+    if not q: return [(0.0,0.0)]*len(texts)
+    n=len(docs)
+    df=Counter(term for d in docs for term in d)
+    idf={t:math.log(1+(n-df.get(t,0)+0.5)/(df.get(t,0)+0.5)) for t in set(q)}
+    weights=sum(idf.values()) or 1
+    avglen=sum(sum(d.values()) for d in docs)/max(n,1)
+    scores=[]
+    for doc in docs:
+        dl=sum(doc.values())
+        bm25=0
+        covered=0
+        for term in set(q):
+            f=doc[term]
+            if f:
+                covered+=idf[term]
+                bm25+=idf[term]*f*2.2/(f+1.2*(0.25+0.75*dl/max(avglen,1)))
+        # full query coverage is a reproducible interpretable signal
+        scores.append((bm25, covered/weights))
+    return scores
 
-
-def evidence_score(similarity: float, lexical: float) -> float:
-    """Heuristic relevance index for UI and triage, NOT probability of correctness.
-
-    Mapping is deliberately documented so it can be retuned against labeled data.
-    """
-    semantic_signal = max(0.0, min(1.0, (similarity - 0.20) / 0.45))
-    return round(max(0.0, min(1.0, 0.6 * semantic_signal + 0.4 * lexical)), 4)
-
-
-def rerank_candidates(query: str, candidates: list[dict[str, Any]], top_k=5) -> list[dict]:
-    q_tokens = set(tokenize(query))
-    processed = []
-    for c in candidates:
-        hit = dict(c)
-        cosine = max(0.0, min(1.0, float(hit.get('similarity', 0))))
-        lexical = lexical_score(query, str(hit.get('text', '')))
-        hit['lexical_similarity'] = lexical
-        hit['evidence_score'] = evidence_score(cosine, lexical)
-        hit['retrieval_score'] = 0.62 * cosine + 0.38 * lexical
-        processed.append(hit)
-    # MMR penalizes repeated near-duplicate text; preserves distinct relevant pages.
-    selected, remaining = [], processed
-    while remaining and len(selected) < top_k:
-        def score(item):
-            t = set(tokenize(item.get('text', '')))
-            redundancy = max((len(t & set(tokenize(s.get('text', '')))) / max(1, len(t | set(tokenize(s.get('text', ''))))) for s in selected), default=0.0)
-            query_presence = len(t & q_tokens) / max(1, len(q_tokens))
-            return 0.80 * item['retrieval_score'] + 0.10 * query_presence - 0.10 * redundancy
-        winner = max(range(len(remaining)), key=lambda i: score(remaining[i]))
-        selected.append(remaining.pop(winner))
-    return selected
-
-
-def retrieve_context(query: str, top_k: int = 5, min_similarity: float = 0.0) -> list[dict]:
-    query = query.strip()
-    if not query:
-        return []
-    if not 1 <= top_k <= 30 or not 0 <= min_similarity <= 1:
-        raise ValueError('Tham số truy xuất không hợp lệ.')
-    from .database import get_collection
-    from .embeddings import encode_query
-    collection = get_collection()
-    count = collection.count()
-    if not count:
-        return []
-    result = collection.query(query_embeddings=[encode_query(query)],
-                              n_results=min(max(8 * top_k, 30), count),
-                              include=['documents', 'metadatas', 'distances'])
-    candidates = []
-    for doc, meta, distance in zip(result.get('documents', [[]])[0],
-                                   result.get('metadatas', [[]])[0],
-                                   result.get('distances', [[]])[0]):
-        cosine = max(0.0, min(1.0, 1.0 - float(distance)))
-        if cosine < min_similarity:
-            continue
-        meta = meta or {}
-        candidates.append({'text': doc or '', 'source': meta.get('source', 'Không rõ'),
-                           'source_id': meta.get('source_id', ''),
-                           'page': meta.get('page', 0), 'chunk': meta.get('chunk', 0),
-                           'similarity': cosine})
-    return rerank_candidates(query, candidates, top_k)
+def retrieve_context(query, actor=None, top_k=5, use_dense=True):
+    query = (query or '').strip()
+    if not query or not (1 <= top_k <= 20): return []
+    rows = authorized_chunks(actor)
+    if not rows: return []
+    lexical = _lexical(query, [r['title']+' '+r['section']+' '+r['content'] for r in rows])
+    ranks_lex = sorted(range(len(rows)), key=lambda i: lexical[i][0], reverse=True)
+    dense = [0.0]*len(rows)
+    has_dense = False
+    if use_dense and any(r['embedding_json'] and r['embedding_model'] == EMBED_MODEL for r in rows):
+        try:
+            from .ollama import embed_batch
+            vec = embed_batch([query])[0]
+            for i,r in enumerate(rows):
+                if r['embedding_json'] and r['embedding_model']==EMBED_MODEL:
+                    dense[i]=max(0.0, cosine(vec, json.loads(r['embedding_json'])))
+            has_dense=True
+        except Exception:
+            # Degrade to lexical retrieval; generation will independently report Ollama errors.
+            pass
+    ranks_dense = sorted(range(len(rows)), key=lambda i: dense[i], reverse=True)
+    lexrank = {idx:r for r,idx in enumerate(ranks_lex,1)}
+    denserank = {idx:r for r,idx in enumerate(ranks_dense,1)}
+    results=[]
+    for i,row in enumerate(rows):
+        bm25, coverage = lexical[i]
+        if not bm25 and (not has_dense or dense[i] < 0.45): continue
+        rrf=1/(50+lexrank[i])+(1/(50+denserank[i]) if has_dense else 0)
+        # The weights are heuristic for ranking/triage only, never claim calibrated accuracy.
+        semantic=max(0.0,min(1.0,(dense[i]-0.30)/0.43)) if has_dense else 0.0
+        relevance=min(1.0,0.55*coverage+0.45*semantic) if has_dense else coverage
+        results.append({
+            'text': row['content'], 'source': row['filename'], 'title':row['title'],
+            'section':row['section'], 'page':row['page'], 'chunk_id':row['id'],
+            'similarity':round(dense[i],4) if has_dense else None,
+            'lexical_coverage':round(coverage,4), 'evidence_score':round(relevance,4),
+            '_score':rrf+0.03*relevance, 'audience':row['audience']
+        })
+    results.sort(key=lambda r:r['_score'],reverse=True)
+    for item in results: item.pop('_score',None)
+    return results[:top_k]

@@ -75,6 +75,10 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
         ''')
+    with db() as c:
+        cols={r['name'] for r in c.execute('PRAGMA table_info(users)')}
+        if 'active' not in cols:
+            c.execute('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
     cfg = get_auth_config()
     # Bootstrap admin only when there are no accounts; prevents a future secret
     # misconfiguration from promoting an existing user silently.
@@ -141,6 +145,8 @@ def login(email: str, password: str) -> dict | None:
             # Keep roughly comparable verification cost for unknown accounts.
             _verify_password(password, _DUMMY_HASH)
             return None
+        if not row['active']:
+            return None
         locked = row['locked_until']
         if locked and datetime.fromisoformat(locked) > datetime.now(timezone.utc):
             return None
@@ -165,7 +171,7 @@ def require_role(actor: dict, roles=('staff', 'admin')) -> None:
 
 def get_user(user_id: str) -> dict | None:
     with db() as c:
-        row = c.execute('SELECT id, name, email, role FROM users WHERE id=?', (user_id,)).fetchone()
+        row = c.execute('SELECT id, name, email, role FROM users WHERE id=? AND active=1', (user_id,)).fetchone()
         return dict(row) if row else None
 
 
@@ -183,3 +189,18 @@ def change_password(actor: dict, current_password: str, new_password: str) -> No
             raise ValueError('Mật khẩu mới phải khác mật khẩu hiện tại.')
         c.execute('UPDATE users SET password_hash=?, failed_attempts=0, locked_until=NULL WHERE id=?',
                   (_hash_password(new_password), actor['id']))
+
+
+def list_accounts(actor):
+    require_role(actor, ('admin',))
+    with db() as c:
+        return [dict(r) for r in c.execute('SELECT id,name,email,role,active,created_at FROM users ORDER BY created_at DESC')]
+
+
+def set_account_active(actor, user_id, active):
+    require_role(actor, ('admin',))
+    if user_id == actor['id']:
+        raise ValueError('Không thể tự khóa tài khoản quản trị đang đăng nhập.')
+    with db() as c:
+        changed=c.execute('UPDATE users SET active=? WHERE id=?', (int(bool(active)),user_id))
+        if changed.rowcount != 1:raise ValueError('Không tìm thấy tài khoản.')

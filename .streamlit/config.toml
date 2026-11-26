@@ -1,10 +1,13 @@
-[theme]
-base = "light"
-primaryColor = "#5049B7"
-backgroundColor = "#F7F9FD"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#18233D"
-font = "sans serif"
-
 [server]
-maxUploadSize = 30
+headless = true
+maxUploadSize = 15
+maxMessageSize = 30
+enableXsrfProtection = true
+[browser]
+gatherUsageStats = false
+[theme]
+primaryColor = "#344b99"
+backgroundColor = "#f6f8fc"
+secondaryBackgroundColor = "#eef3f9"
+textColor = "#182642"
+font = "sans serif"

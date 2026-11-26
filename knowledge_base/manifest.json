@@ -1,0 +1,82 @@
+[
+  {
+    "filename": "01_gioi_thieu.md",
+    "title": "Tổng quan và kênh hỗ trợ",
+    "audience": "customer"
+  },
+  {
+    "filename": "02_mua_hang.md",
+    "title": "Đặt hàng và xác nhận đơn",
+    "audience": "customer"
+  },
+  {
+    "filename": "03_giao_hang.md",
+    "title": "Giao nhận và vận chuyển",
+    "audience": "customer"
+  },
+  {
+    "filename": "04_bao_hanh.md",
+    "title": "Chính sách bảo hành thiết bị",
+    "audience": "customer"
+  },
+  {
+    "filename": "05_doi_tra.md",
+    "title": "Đổi trả sản phẩm",
+    "audience": "customer"
+  },
+  {
+    "filename": "06_hoan_tien.md",
+    "title": "Hoàn tiền và đối soát",
+    "audience": "customer"
+  },
+  {
+    "filename": "07_thanh_toan.md",
+    "title": "Thanh toán đơn hàng",
+    "audience": "customer"
+  },
+  {
+    "filename": "08_hoa_don.md",
+    "title": "Hóa đơn và chứng từ",
+    "audience": "customer"
+  },
+  {
+    "filename": "09_tai_khoan.md",
+    "title": "Tài khoản khách hàng",
+    "audience": "customer"
+  },
+  {
+    "filename": "10_bao_mat.md",
+    "title": "Bảo mật và dữ liệu cá nhân",
+    "audience": "customer"
+  },
+  {
+    "filename": "11_ho_tro_ky_thuat.md",
+    "title": "Hướng dẫn hỗ trợ kỹ thuật",
+    "audience": "customer"
+  },
+  {
+    "filename": "12_bao_tri.md",
+    "title": "Bảo trì và hỗ trợ sau bán",
+    "audience": "customer"
+  },
+  {
+    "filename": "13_uu_dai.md",
+    "title": "Ưu đãi và chương trình khuyến mại",
+    "audience": "customer"
+  },
+  {
+    "filename": "14_khieu_nai.md",
+    "title": "Tiếp nhận và xử lý khiếu nại",
+    "audience": "customer"
+  },
+  {
+    "filename": "15_tham_khao_noi_bo.md",
+    "title": "Quy trình phối hợp nhân viên (nội bộ)",
+    "audience": "staff"
+  },
+  {
+    "filename": "16_so_tay_nhan_su_mau.pdf",
+    "title": "Sổ tay quy định nhân sự An Phát (giả lập – chỉ nhân viên)",
+    "audience": "staff"
+  }
+]

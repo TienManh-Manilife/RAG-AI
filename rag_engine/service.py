@@ -11,9 +11,10 @@ def _id():
 
 def _source_summary(hits):
     # Persist only source references, not uploaded full-text document contents.
-    return [dict(source=str(h.get('source', ''))[:200], page=h.get('page'),
-                 similarity=round(float(h.get('similarity', 0)), 4),
-                 evidence_score=round(float(h.get('evidence_score', 0)), 4)) for h in hits[:10]]
+    return [dict(source=str(h.get('source', ''))[:200], title=str(h.get('title',''))[:180],
+                 section=str(h.get('section',''))[:180], page=h.get('page'),
+                 similarity=round(float(h.get('similarity') or 0), 4),
+                 evidence_score=round(float(h.get('evidence_score') or 0), 4)) for h in hits[:10]]
 
 
 def new_conversation(actor, mode: str, title: str) -> str:
@@ -165,8 +166,10 @@ def update_handoff(actor, handoff_id, action, reply=''):
         if action == 'take':
             if row['status'] != 'pending':
                 raise ValueError('Yêu cầu đã được tiếp nhận.')
-            c.execute('''UPDATE handoffs SET status='in_progress',staff_id=?, updated_at=?
+            updated=c.execute('''UPDATE handoffs SET status='in_progress',staff_id=?, updated_at=?
                          WHERE id=? AND status='pending' ''', (actor['id'], utcnow(), handoff_id))
+            if updated.rowcount != 1:
+                raise ValueError('Phiếu đã được nhân viên khác nhận.')
         elif action == 'resolve':
             if row['status'] != 'in_progress' or (row['staff_id'] != actor['id'] and actor['role'] != 'admin'):
                 raise PermissionError('Chỉ nhân viên tiếp nhận mới được trả lời.')
@@ -203,3 +206,20 @@ def metrics(actor):
         'feedback_accuracy': feedback['correct']/feedback['n'] if feedback['n'] else None,
         'mean_evidence': events['mean_score'], 'system_questions': system_docs,
     }
+
+
+def customer_reopen(actor, handoff_id):
+    """Only ticket owner may reopen a resolved ticket; uses one atomic update."""
+    with db() as c:
+        updated=c.execute("""UPDATE handoffs SET status='pending',staff_id=NULL,
+                 staff_reply='',updated_at=? WHERE id=? AND user_id=? AND status='resolved'""",
+                 (utcnow(),handoff_id,actor['id']))
+        if updated.rowcount != 1:
+            raise PermissionError('Bạn không sở hữu phiếu hoặc phiếu chưa giải quyết.')
+
+
+def list_my_handoffs(actor):
+    with db() as c:
+        return [dict(r) for r in c.execute("""SELECT id,question,ai_answer,reason,status,
+            staff_reply,created_at,updated_at FROM handoffs WHERE user_id=?
+            ORDER BY created_at DESC LIMIT 200""", (actor['id'],)).fetchall()]

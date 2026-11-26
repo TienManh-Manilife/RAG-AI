@@ -1,19 +1,31 @@
-"""Deterministic escalation rule; score is a heuristic, not calibrated probability."""
-from typing import Any
+"""Conservative human escalation policy. Index is retrieval relevance, not a probability."""
+import re
+from .config import RAG_MIN_RELEVANCE
 
+# Avoid false statements about live customer-specific information without integration.
+PERSONAL = re.compile(
+    r'(trạng thái (?:đơn hàng|bảo hành) của tôi|'
+    r'kiểm tra đơn hàng của tôi|đơn hàng của tôi (?:đang|ở|đến|bao giờ)|'
+    r'(?:cho tôi|cung cấp|tiết lộ|lấy|xem|biết)\s+(?:mật khẩu|mã otp)|'
+    r'lịch sử mua hàng của|thông tin khách hàng khác|'
+    r'tài khoản của người khác|hoàn tiền cho đơn của tôi|thanh toán của tôi)', re.I)
 
-def should_handoff(hits: list[dict[str, Any]], answer_metadata: dict[str, Any],
-                   min_similarity: float = 0.45) -> tuple[bool, str, float]:
-    """Backward-compatible name/return shape; third value is evidence index."""
-    best = max((float(h.get('evidence_score', h.get('similarity', 0))) for h in hits), default=0.0)
+def personal_handoff(query):
+    return bool(PERSONAL.search(query))
+
+def should_handoff(hits, answer_metadata, min_similarity=None):
+    t=RAG_MIN_RELEVANCE if min_similarity is None else min_similarity
+    best=max((float(x.get('evidence_score') or 0) for x in hits), default=0.0)
+    if answer_metadata.get('personal_verification'):
+        return True,'Yêu cầu xác minh thông tin giao dịch/cá nhân; nhân viên cần kiểm tra.',best
     if not hits:
-        return True, 'Chưa tìm thấy nguồn tài liệu phù hợp.', best
+        return True,'Không tìm được đoạn nguồn phù hợp.',best
+    if answer_metadata.get('service_error'):
+        return True,'Dịch vụ AI chưa sẵn sàng; chuyển nhân viên.',best
+    if best < t:
+        return True,f'Bằng chứng truy xuất dưới ngưỡng liên quan {t:.0%}.',best
     if answer_metadata.get('no_context') or answer_metadata.get('insufficient_evidence'):
-        return True, 'Tài liệu hoặc câu trả lời chưa đủ căn cứ xác minh.', best
-    if answer_metadata.get('answer_filtered'):
-        return True, 'Mô hình không cung cấp câu trả lời cuối cùng hợp lệ.', best
-    if answer_metadata.get('missing_citation'):
-        return True, 'Câu trả lời chưa có trích dẫn nguồn hợp lệ.', best
-    if best < min_similarity:
-        return True, f'Chỉ số phù hợp bằng chứng {best:.0%} thấp hơn ngưỡng {min_similarity:.0%}.', best
-    return False, '', best
+        return True,'Mô hình xác nhận tài liệu chưa đủ căn cứ.',best
+    if answer_metadata.get('missing_citation') or answer_metadata.get('answer_filtered'):
+        return True,'Không xác minh được trích dẫn/định dạng câu trả lời.',best
+    return False,'',best

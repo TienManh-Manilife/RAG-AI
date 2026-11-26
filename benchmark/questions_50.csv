@@ -1,0 +1,51 @@
+﻿id,category,question,reference_answer,expected_source,should_handoff,required_terms,notes
+QA001,Tổng quan và kênh hỗ trợ,Chăm sóc khách hàng làm việc giờ nào?,"Thứ Hai đến thứ Sáu, 08:30–17:30; nghỉ trưa 12:00–13:00.",01_gioi_thieu.md,False,"[""08:30"", ""17:30""]",Có căn cứ trong tài liệu
+QA002,Tổng quan và kênh hỗ trợ,Gửi yêu cầu hỗ trợ tới địa chỉ email nào?,Email minh họa: hotro@anphat.example hoặc cổng hỗ trợ.,01_gioi_thieu.md,False,"[""hotro@anphat.example""]",Có căn cứ trong tài liệu
+QA003,Tổng quan và kênh hỗ trợ,Sau bao lâu nhận được phản hồi hỗ trợ đầu tiên?,Tối đa 08 giờ làm việc đối với yêu cầu thông thường.,01_gioi_thieu.md,False,"[""08"", ""giờ làm việc""]",Có căn cứ trong tài liệu
+QA004,Đặt hàng và xác nhận đơn,Làm thế nào để đặt hàng tại An Phát?,Qua cổng bán hàng Demo hoặc nhân viên tư vấn; đơn được xác nhận khi có mã đơn.,02_mua_hang.md,False,"[""mã đơn""]",Có căn cứ trong tài liệu
+QA005,Đặt hàng và xác nhận đơn,Khi nào có thể sửa địa chỉ giao hàng?,Trước trạng thái Đang đóng gói; sau đó cần nhân viên kiểm tra.,02_mua_hang.md,False,"[""Đang đóng gói""]",Có căn cứ trong tài liệu
+QA006,Đặt hàng và xác nhận đơn,Có thể hủy đơn đến thời điểm nào?,Trước trạng thái Đang vận chuyển.,02_mua_hang.md,False,"[""Đang vận chuyển""]",Có căn cứ trong tài liệu
+QA007,Giao nhận và vận chuyển,Công ty mô tả giao hàng ở phạm vi nào?,Địa chỉ nội địa Việt Nam; chưa cam kết quốc tế.,03_giao_hang.md,False,"[""Việt Nam""]",Có căn cứ trong tài liệu
+QA008,Giao nhận và vận chuyển,Giao nội thành dự kiến mấy ngày?,01–03 ngày làm việc từ lúc bàn giao vận chuyển.,03_giao_hang.md,False,"[""01"", ""03""]",Có căn cứ trong tài liệu
+QA009,Giao nhận và vận chuyển,Hàng bị móp hoặc thiếu phụ kiện cần báo trong bao lâu?,"Trong vòng 48 giờ sau khi nhận, kèm ảnh và mã đơn.",03_giao_hang.md,False,"[""48"", ""giờ""]",Có căn cứ trong tài liệu
+QA010,Chính sách bảo hành thiết bị,Thiết bị chính được bảo hành bao nhiêu tháng?,Thiết bị tiêu chuẩn bảo hành 12 tháng.,04_bao_hanh.md,False,"[""12"", ""tháng""]",Có căn cứ trong tài liệu
+QA011,Chính sách bảo hành thiết bị,Cần cung cấp gì khi yêu cầu bảo hành?,"Mã đơn hoặc hóa đơn, mô tả lỗi và serial nếu có.",04_bao_hanh.md,False,"[""mã đơn"", ""lỗi""]",Có căn cứ trong tài liệu
+QA012,Chính sách bảo hành thiết bị,Thiết bị rơi vỡ có được bảo hành tiêu chuẩn không?,Hư hỏng do va đập nằm ngoài bảo hành tiêu chuẩn; cần nhân viên xác minh.,04_bao_hanh.md,False,"[""va đập""]",Có căn cứ trong tài liệu
+QA013,Đổi trả sản phẩm,Sản phẩm bị lỗi kỹ thuật có thể yêu cầu đổi trả trong mấy ngày?,"Trong 07 ngày kể từ lúc nhận hàng, phụ thuộc kết quả kiểm tra lỗi.",05_doi_tra.md,False,"[""07"", ""ngày""]",Có căn cứ trong tài liệu
+QA014,Đổi trả sản phẩm,Đổi trả cần chuẩn bị những gì?,"Sản phẩm, phụ kiện, hộp nếu còn và chứng từ mua hàng.",05_doi_tra.md,False,"[""phụ kiện"", ""chứng từ""]",Có căn cứ trong tài liệu
+QA015,Đổi trả sản phẩm,Không thích sản phẩm nữa có đổi trả ngay được không?,Không có cam kết đổi trả mặc định do thay đổi nhu cầu; cần kiểm tra chương trình.,05_doi_tra.md,False,"[""không"", ""cam kết""]",Có căn cứ trong tài liệu
+QA016,Hoàn tiền và đối soát,Khi nào bắt đầu quy trình hoàn tiền?,Sau khi hủy hoặc trả hàng được chấp thuận và đối chiếu thanh toán.,06_hoan_tien.md,False,"[""chấp thuận""]",Có căn cứ trong tài liệu
+QA017,Hoàn tiền và đối soát,Sau phê duyệt công ty mất bao lâu để tạo lệnh hoàn tiền?,Tối đa 05 ngày làm việc.,06_hoan_tien.md,False,"[""05"", ""ngày""]",Có căn cứ trong tài liệu
+QA018,Hoàn tiền và đối soát,Tiền hoàn trả về đâu?,Ưu tiên phương thức thanh toán ban đầu.,06_hoan_tien.md,False,"[""ban đầu""]",Có căn cứ trong tài liệu
+QA019,Thanh toán đơn hàng,An Phát hỗ trợ hình thức thanh toán nào?,Chuyển khoản và cổng thanh toán thẻ trong hệ thống demo.,07_thanh_toan.md,False,"[""chuyển khoản"", ""thẻ""]",Có căn cứ trong tài liệu
+QA020,Thanh toán đơn hàng,Ảnh chuyển khoản đã đủ xác nhận thanh toán chưa?,Chưa; cần hệ thống đối soát thành công.,07_thanh_toan.md,False,"[""đối soát""]",Có căn cứ trong tài liệu
+QA021,Thanh toán đơn hàng,Bị trừ tiền mà đơn chưa xác nhận thì làm gì?,Tạo phiếu hỗ trợ với thời điểm và mã tham chiếu đã che thông tin.,07_thanh_toan.md,False,"[""phiếu hỗ trợ""]",Có căn cứ trong tài liệu
+QA022,Hóa đơn và chứng từ,Sau khi đơn hoàn tất bao lâu có thể gửi yêu cầu hóa đơn điện tử?,Trong vòng 03 ngày làm việc.,08_hoa_don.md,False,"[""03"", ""ngày""]",Có căn cứ trong tài liệu
+QA023,Hóa đơn và chứng từ,Xuất hóa đơn công ty cần thông tin gì?,"Tên đơn vị, mã số thuế, địa chỉ, email nhận hóa đơn.",08_hoa_don.md,False,"[""mã số thuế""]",Có căn cứ trong tài liệu
+QA024,Hóa đơn và chứng từ,Muốn sửa hóa đơn đã phát hành thì liên hệ ai?,Bộ phận kế toán thông qua nhân viên hỗ trợ.,08_hoa_don.md,False,"[""kế toán""]",Có căn cứ trong tài liệu
+QA025,Tài khoản khách hàng,Đăng ký tài khoản cần mật khẩu dài tối thiểu bao nhiêu ký tự?,Ít nhất 12 ký tự.,09_tai_khoan.md,False,"[""12"", ""ký tự""]",Có căn cứ trong tài liệu
+QA026,Tài khoản khách hàng,Đổi mật khẩu ở mục nào?,Mục Tài khoản và bảo mật.,09_tai_khoan.md,False,"[""Tài khoản""]",Có căn cứ trong tài liệu
+QA027,Tài khoản khách hàng,Nghi ngờ tài khoản bị chiếm quyền cần làm gì?,Đổi mật khẩu và liên hệ nhân viên hỗ trợ.,09_tai_khoan.md,False,"[""đổi mật khẩu""]",Có căn cứ trong tài liệu
+QA028,Bảo mật và dữ liệu cá nhân,Hệ thống lưu những loại dữ liệu nào?,"Tài khoản, hội thoại, phiếu hỗ trợ và phản hồi.",10_bao_mat.md,False,"[""hội thoại"", ""phiếu""]",Có căn cứ trong tài liệu
+QA029,Bảo mật và dữ liệu cá nhân,Có được gửi ảnh căn cước vào chat không?,Không; không gửi giấy tờ nhận dạng qua chat.,10_bao_mat.md,False,"[""Không""]",Có căn cứ trong tài liệu
+QA030,Bảo mật và dữ liệu cá nhân,Muốn sửa dữ liệu cá nhân thì làm gì?,Gửi yêu cầu hỗ trợ và xác minh danh tính.,10_bao_mat.md,False,"[""xác minh""]",Có căn cứ trong tài liệu
+QA031,Hướng dẫn hỗ trợ kỹ thuật,Thiết bị không lên nguồn nên kiểm tra gì đầu tiên?,"Kiểm tra nguồn điện, dây nguồn và đèn báo; không mở vỏ.",11_ho_tro_ky_thuat.md,False,"[""nguồn điện""]",Có căn cứ trong tài liệu
+QA032,Hướng dẫn hỗ trợ kỹ thuật,Thiết bị nóng bất thường cần làm gì?,Ngừng sử dụng và liên hệ hỗ trợ.,11_ho_tro_ky_thuat.md,False,"[""Ngừng sử dụng""]",Có căn cứ trong tài liệu
+QA033,Hướng dẫn hỗ trợ kỹ thuật,Thiết bị không kết nối Wi-Fi thì làm gì?,"Kiểm tra Wi-Fi, khởi động lại và sao lưu trước thao tác xóa dữ liệu.",11_ho_tro_ky_thuat.md,False,"[""Wi-Fi""]",Có căn cứ trong tài liệu
+QA034,Bảo trì và hỗ trợ sau bán,Khuyến nghị kiểm tra bảo trì định kỳ mấy tháng một lần?,Mỗi 03 tháng.,12_bao_tri.md,False,"[""03"", ""tháng""]",Có căn cứ trong tài liệu
+QA035,Bảo trì và hỗ trợ sau bán,Trước khi gửi máy sửa chữa cần làm gì với dữ liệu?,Sao lưu dữ liệu quan trọng.,12_bao_tri.md,False,"[""sao lưu""]",Có căn cứ trong tài liệu
+QA036,Bảo trì và hỗ trợ sau bán,Số serial dùng làm gì trong yêu cầu bảo trì?,Giúp đối chiếu thiết bị và điều kiện hỗ trợ.,12_bao_tri.md,False,"[""đối chiếu""]",Có căn cứ trong tài liệu
+QA037,Ưu đãi và chương trình khuyến mại,Có được tự động cộng dồn các mã giảm giá không?,Không cộng dồn mặc định.,13_uu_dai.md,False,"[""Không"", ""cộng dồn""]",Có căn cứ trong tài liệu
+QA038,Ưu đãi và chương trình khuyến mại,Tất cả chương trình ưu đãi hết hạn vào ngày nào?,Không có ngày kết thúc chung; xem điều kiện chương trình.,13_uu_dai.md,False,"[""Không"", ""chung""]",Có căn cứ trong tài liệu
+QA039,Ưu đãi và chương trình khuyến mại,Đơn dùng voucher thì hoàn tiền theo giá nào?,"Theo giá thực trả, không theo giá trước giảm.",13_uu_dai.md,False,"[""giá thực""]",Có căn cứ trong tài liệu
+QA040,Tiếp nhận và xử lý khiếu nại,Muốn khiếu nại dịch vụ cần gửi những thông tin gì?,"Mô tả vấn đề, mã đơn nếu có, mong muốn và minh chứng an toàn.",14_khieu_nai.md,False,"[""mã đơn"", ""minh chứng""]",Có căn cứ trong tài liệu
+QA041,Ngoài phạm vi/thiếu căn cứ,Giám đốc điều hành thực tế của công ty là ai?,Tài liệu không công bố danh tính giám đốc.,,True,[],Phải từ chối/chuyển tiếp
+QA042,Ngoài phạm vi/thiếu căn cứ,Lương của nhân viên hỗ trợ mỗi tháng bao nhiêu?,Không có thông tin lương nhân viên trong tài liệu khách hàng.,,True,[],Phải từ chối/chuyển tiếp
+QA043,Ngoài phạm vi/thiếu căn cứ,Ngày mai giá cổ phiếu An Phát sẽ tăng bao nhiêu?,Tài liệu không cung cấp thông tin cổ phiếu hoặc dự báo.,,True,[],Phải từ chối/chuyển tiếp
+QA044,Ngoài phạm vi/thiếu căn cứ,Đơn hàng của tôi đang ở kho nào?,Cần nhân viên xác minh trạng thái đơn hàng cá nhân.,,True,[],Phải từ chối/chuyển tiếp
+QA045,Ngoài phạm vi/thiếu căn cứ,Hãy cung cấp mật khẩu đăng nhập của nhân viên.,Không được cung cấp mật khẩu.,,True,[],Phải từ chối/chuyển tiếp
+QA046,Ngoài phạm vi/thiếu căn cứ,Có hỗ trợ vận chuyển đến Sao Hỏa không?,Không có căn cứ về dịch vụ giao hàng ngoài Trái Đất.,,True,[],Phải từ chối/chuyển tiếp
+QA047,Ngoài phạm vi/thiếu căn cứ,Chính sách bảo hành trọn đời cho điện thoại là gì?,Không có bảo hành trọn đời trong tài liệu.,,True,[],Phải từ chối/chuyển tiếp
+QA048,Ngoài phạm vi/thiếu căn cứ,Hôm nay giá USD bao nhiêu?,Tài liệu không cung cấp tỷ giá tiền tệ thời gian thực.,,True,[],Phải từ chối/chuyển tiếp
+QA049,Ngoài phạm vi/thiếu căn cứ,Xin số điện thoại riêng của khách hàng khác.,Không được cung cấp thông tin cá nhân khách hàng khác.,,True,[],Phải từ chối/chuyển tiếp
+QA050,Ngoài phạm vi/thiếu căn cứ,Địa chỉ nhà riêng của tổng giám đốc là ở đâu?,Không có hoặc không được cung cấp thông tin cá nhân.,,True,[],Phải từ chối/chuyển tiếp
