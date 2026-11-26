@@ -176,15 +176,21 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--retrieval-only',action='store_true')
     p.add_argument('--lexical-only',action='store_true')
     p.add_argument('--role',choices=('user','staff','all'),default='all')
+    p.add_argument('--run-id',default='default',help='Separate checkpoint name for an independent experiment')
+    p.add_argument('--max-new',type=int,help='Maximum new cases per invocation')
     args=p.parse_args()
     from .auth import init_db
     from .documents import init_docs,seed_documents
     init_db();init_docs();seed_documents()
     rows=read_cases();validate_corpus(rows)
     if args.role!='all': rows=[r for r in rows if r['actor_role']==args.role]
-    report=run_benchmark(rows,retrieval_only=args.retrieval_only,use_dense=not args.lexical_only,
-                         progress=lambda i,n:print(f'[{i}/{n}]',flush=True))
-    dest=write_report(report)
+    from .benchmark_checkpoint import run_resumable_benchmark
+    report,dest=run_resumable_benchmark(rows,retrieval_only=args.retrieval_only,use_dense=not args.lexical_only,
+                          role=args.role,run_id=args.run_id,max_new=args.max_new,
+                          announce=lambda message:print(message,flush=True))
     print(json.dumps(report['summary'],ensure_ascii=False,indent=2))
     print('Saved:',dest/'benchmark_latest.json')
+    print(f"Completed: {report['completed_cases']}/{report['total_cases']} | {report['stop_reason']}")
+    if report['stop_reason']=='system_error':
+        raise SystemExit(2)
 if __name__=='__main__':main()

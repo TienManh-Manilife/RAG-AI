@@ -8,6 +8,18 @@ import math
 import re
 import unicodedata
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_STRICT_DENSE = ContextVar("strict_dense_benchmark", default=False)
+
+@contextmanager
+def strict_dense_benchmark(enabled=True):
+    token = _STRICT_DENSE.set(enabled)
+    try:
+        yield
+    finally:
+        _STRICT_DENSE.reset(token)
 from .documents import authorized_chunks
 from .config import EMBED_MODEL
 
@@ -59,6 +71,8 @@ def retrieve_context(query, actor=None, top_k=5, use_dense=True):
     if not query or not (1 <= top_k <= 20): return []
     rows = authorized_chunks(actor)
     if not rows: return []
+    if use_dense and _STRICT_DENSE.get() and any(not r['embedding_json'] or r['embedding_model'] != EMBED_MODEL for r in rows):
+        raise RuntimeError("Missing current document embeddings in hybrid benchmark")
     lexical = _lexical(query, [r['title']+' '+r['section']+' '+r['content'] for r in rows])
     ranks_lex = sorted(range(len(rows)), key=lambda i: lexical[i][0], reverse=True)
     dense = [0.0]*len(rows)
@@ -69,10 +83,15 @@ def retrieve_context(query, actor=None, top_k=5, use_dense=True):
             vec = embed_batch([query])[0]
             for i,r in enumerate(rows):
                 if r['embedding_json'] and r['embedding_model']==EMBED_MODEL:
-                    dense[i]=max(0.0, cosine(vec, json.loads(r['embedding_json'])))
+                    stored = json.loads(r['embedding_json'])
+                    if _STRICT_DENSE.get() and (not vec or len(vec) != len(stored)):
+                        raise RuntimeError("Invalid embedding dimensions in hybrid benchmark")
+                    dense[i]=max(0.0, cosine(vec, stored))
             has_dense=True
         except Exception:
-            # Degrade to lexical retrieval; generation will independently report Ollama errors.
+            # Preserve live-chat fallback, but never silently mix methods in resumable evaluation.
+            if _STRICT_DENSE.get():
+                raise
             pass
     ranks_dense = sorted(range(len(rows)), key=lambda i: dense[i], reverse=True)
     lexrank = {idx:r for r,idx in enumerate(ranks_lex,1)}
