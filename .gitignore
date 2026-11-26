@@ -1,21 +1,15 @@
-# Never commit credentials or user data.
+# Private configuration and runtime state
 .env
 .env.*
 !.env.example
 .streamlit/secrets.toml
-.venv/
-venv/
+data/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.huggingface/
-data/
-embedding_model/
+.venv/
+venv/
 *.sqlite3
 *.sqlite3-*
-*.db
 *.log
-ai_server/
-ollama/
-storage/
-tests/
+reports/
