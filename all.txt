@@ -1,0 +1,21 @@
+Thực nghiệm 1 — Lexical Retrieval
+docker compose exec -w /app app python -m rag_engine.benchmark --retrieval-only --lexical-only
+docker compose cp app:/app/data/reports/benchmark_latest.json .\retrieval_lexical.json
+
+Thực nghiệm 2 — Hybrid Retrieval
+docker compose exec -w /app app python -m rag_engine.benchmark --retrieval-only
+docker compose cp app:/app/data/reports/benchmark_latest.json .\retrieval_hybrid.json
+
+Thực nghiệm 3 — Full RAG-AI (End-to-End)
+docker compose exec -w /app app python -m rag_engine.benchmark
+
+docker compose cp app:/app/data/reports/benchmark_latest.json .\benchmark_pdf_v2.json
+docker compose cp app:/app/data/reports/benchmark_latest.csv .\benchmark_pdf_v2.csv
+
+
+Ngoài ra, nếu muốn đánh giá riêng từng loại tài khoản:
+# Khach hang - 38 cau
+docker compose exec app python -m rag_engine.benchmark --role user
+
+# Nhan vien - 12 cau
+docker compose exec app python -m rag_engine.benchmark --role staff

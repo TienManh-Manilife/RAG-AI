@@ -48,7 +48,7 @@ def test_user_cannot_delete(setup_db):
 
 def test_seeding_not_recreated_after_delete(setup_db):
     user,staff,_=setup_db
-    assert documents.seed_documents()>=16
+    assert documents.seed_documents()==2
     docs=documents.list_docs(staff)
     documents.remove(staff,docs[0]['id'])
     assert documents.seed_documents()==0

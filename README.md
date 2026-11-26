@@ -1,4 +1,4 @@
-# An Phát Demo – Trợ lý chăm sóc khách hàng RAG (Docker Local)
+# Trợ lý chăm sóc khách hàng RAG (Docker Local)
 
 > **Đồ án nghiên cứu, 100% dữ liệu doanh nghiệp giả lập.** Tên An Phát, chính sách, email `.example` và các chỉ tiêu trong `knowledge_base/` không phải thông tin của doanh nghiệp thực. Không nên dùng để quyết định quyền lợi thực tế.
 
@@ -57,23 +57,19 @@ Không dùng file GPU nếu máy không có GPU NVIDIA được hỗ trợ.
 
 ## 4. Các vai trò và nghiệp vụ
 
-| Vai trò | Phạm vi |
-|---|---|
-| Khách hàng | Tự đăng ký/đăng nhập, chat nguồn được duyệt, xem lịch sử của mình, phản hồi hữu ích, theo dõi và mở lại phiếu đã hoàn thành, đổi mật khẩu |
-| Nhân viên | Tất cả nghiệp vụ tra cứu nội bộ, **upload/cập nhật/xóa tài liệu**, phân quyền nguồn customer/staff, tạo embedding, nhận và xử lý phiếu, phản hồi, xem KPI và đánh giá |
-| Quản trị viên | Nghiệp vụ nhân viên, tạo tài khoản staff, khóa/mở tài khoản khác |
+| Vai trò       | Phạm vi                                                                                                                                                               |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Khách hàng    | Tự đăng ký/đăng nhập, chat nguồn được duyệt, xem lịch sử của mình, phản hồi hữu ích, theo dõi và mở lại phiếu đã hoàn thành, đổi mật khẩu                             |
+| Nhân viên     | Tất cả nghiệp vụ tra cứu nội bộ, **upload/cập nhật/xóa tài liệu**, phân quyền nguồn customer/staff, tạo embedding, nhận và xử lý phiếu, phản hồi, xem KPI và đánh giá |
+| Quản trị viên | Nghiệp vụ nhân viên, tạo tài khoản staff, khóa/mở tài khoản khác                                                                                                      |
 
-Cơ chế bắt buộc trên tầng dữ liệu: khách không thể gọi API Python để tải tài liệu hay đọc chunk `staff`; truy vấn được lọc *trước* bước truy xuất. Khách không đọc hội thoại hoặc phiếu của người khác.
+Cơ chế bắt buộc trên tầng dữ liệu: khách không thể gọi API Python để tải tài liệu hay đọc chunk `staff`; truy vấn được lọc _trước_ bước truy xuất. Khách không đọc hội thoại hoặc phiếu của người khác.
 
 **Chuyển tiếp người–máy:** khi phát hiện yêu cầu xác minh giao dịch cá nhân, không tìm được nguồn, điểm liên quan thấp, mô hình xác nhận thiếu căn cứ, thiếu trích dẫn hoặc dịch vụ AI lỗi, hệ thống **tự mở phiếu**. Nhân viên nhận phiếu → xác minh → trả lời → đóng. Khách theo dõi và có thể mở lại phiếu.
 
 ## 5. Kho tri thức
 
 `knowledge_base/manifest.json` mô tả danh sách tài liệu và phân quyền:
-
-- 14 tài liệu chính sách khách hàng: đặt hàng, vận chuyển, bảo hành, đổi trả, hoàn tiền, thanh toán, hóa đơn, tài khoản, dữ liệu cá nhân, kỹ thuật, bảo trì, ưu đãi, khiếu nại và hướng dẫn dịch vụ.
-- 01 tài liệu hướng dẫn nghiệp vụ nội bộ, chỉ staff.
-- 01 PDF nội quy nhân sự **giả lập** kế thừa từ dự án gốc, chỉ staff.
 
 Tài liệu seed chỉ được nạp **một lần** khi cơ sở dữ liệu được tạo. Sau đó nhân viên có thể xóa, cập nhật và thêm tài liệu; việc xóa không bị seed đè trở lại vào mỗi lần reload. Tải lên hỗ trợ PDF/DOCX/TXT/MD tối đa 15 MB. PDF scan phải OCR trước.
 
@@ -92,7 +88,7 @@ Khi Docker chạy lần đầu, `app` tự bootstrap kho và lập chỉ mục B
 ### Kiểm tra trực tiếp Ollama/RAG trước benchmark
 
 ```powershell
-docker compose exec app python scripts/smoke_test.py
+docker compose exec -w /app app python -m scripts.smoke_test
 ```
 
 ### Chạy nhanh: chỉ kiểm tra retrieval
@@ -129,7 +125,7 @@ docker compose cp app:/app/data/reports/benchmark_latest.csv .\benchmark_latest.
 - **Handoff rate**: số câu AI đề nghị nhân viên / số câu xử lý thực tế.
 - **Handoff precision / recall / F1**: đánh giá quyết định chuyển tiếp với 10 nhãn cần chuyển và 40 nhãn không cần chuyển.
 - **Citation rate**: tỷ lệ câu được trả lời có trích dẫn hợp lệ.
-- **Keyphrase coverage**: mức có mặt của các thông tin trọng yếu trong câu trả lời; *chỉ là proxy*, không thay thế thẩm định đúng/sai ngữ nghĩa.
+- **Keyphrase coverage**: mức có mặt của các thông tin trọng yếu trong câu trả lời; _chỉ là proxy_, không thay thế thẩm định đúng/sai ngữ nghĩa.
 - **Loại lỗi**: retrieval miss, false handoff, missed handoff, missing citation, keyphrase mismatch, system error.
 - **KPI hoạt động**: tỷ lệ chuyển đề xuất, tỷ lệ phiếu thực tế, thời gian đóng, phản hồi khách hàng.
 

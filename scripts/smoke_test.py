@@ -9,7 +9,7 @@ def main():
     status=ready()
     assert status['online'] and status['chat'] and status['embed'],f'Ollama models not ready: {status}'
     docs=list_docs({'role':'user'})
-    assert len(docs)>=14, f'Customer docs missing: {len(docs)}'
+    assert len(docs) >= 1, f'Customer docs missing: {len(docs)}'
     q='Thiết bị tiêu chuẩn được bảo hành bao nhiêu tháng?'
     out=answer_question(q,actor={'role':'user'})
     print('QUESTION:',q)
