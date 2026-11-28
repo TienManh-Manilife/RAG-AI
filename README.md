@@ -4,7 +4,7 @@
 
 ### Evidence-aware Hybrid Retrieval-Augmented Generation
 
-**Trợ lý chăm sóc khách hàng dựa trên RAG**  
+**Trợ lý chăm sóc khách hàng dựa trên tri thức doanh nghiệp**  
 _Truy xuất kết hợp · Đánh giá bằng chứng · Phối hợp AI – Nhân viên_
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)
@@ -14,11 +14,7 @@ _Truy xuất kết hợp · Đánh giá bằng chứng · Phối hợp AI – Nh
 ![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?style=flat-square&logo=sqlite&logoColor=white)
 ![Benchmark](https://img.shields.io/badge/Benchmark-200%20questions-0D9488?style=flat-square)
 
-[Giới thiệu](#overview) · [Kiến trúc](#architecture) · [Cài đặt](#installation) · [Thực nghiệm](#benchmark) · [Kết quả](#results) · [Thành viên](#team)
-
-**Nhóm 01** - Khoa học dịch vụ
-
-Trường Đại học Công nghệ - Đại học Quốc gia Hà Nội
+[Giới thiệu](#overview) · [Kiến trúc](#architecture) · [Cài đặt](#installation) · [Thực nghiệm](#benchmark) · [Kết quả](#results)
 
 </div>
 
@@ -172,15 +168,23 @@ Streamlit chỉ được công bố tại `127.0.0.1:8501`. Ollama giao tiếp q
 ### 4.2. Tải mã nguồn
 
 ```powershell
-git clone https://github.com/TienManh-Manilife/EH-RAG.git
-cd EH-RAG
+git clone https://github.com/TienManh-Manilife/RAG-AI.git
+cd RAG-AI
 ```
 
 Hoặc tải ZIP mã nguồn và mở terminal tại thư mục chứa `docker-compose.yml`.
 
 ### 4.3. Cấu hình tài khoản quản trị
 
-Sao chép `.env.example` thành `.env`, sau đó điền mật khẩu mạnh (ít nhất 12 ký tự, không giữ giá trị mẫu) vào `BOOTSTRAP_ADMIN_PASSWORD`.
+Trên Windows PowerShell:
+
+```powershell
+.\scripts\setup.ps1
+```
+
+Script tạo `.env` nếu chưa tồn tại và sinh mật khẩu admin ngẫu nhiên. Lưu mật khẩu ở nơi an toàn; email mặc định là `admin@anphat.local`.
+
+Nếu không dùng PowerShell, sao chép `.env.example` thành `.env`, sau đó điền mật khẩu mạnh (ít nhất 12 ký tự, không giữ giá trị mẫu) vào `BOOTSTRAP_ADMIN_PASSWORD`.
 
 | Biến môi trường            | Mục đích                                |
 | :------------------------- | :-------------------------------------- |
@@ -447,7 +451,7 @@ Lớp dương là câu hỏi cần chuyển tiếp. TP là chuyển tiếp đún
 
 Nguồn số liệu: `metrics_summary.csv` và `paired_comparison.csv` của thực nghiệm V200. Các chỉ số được làm tròn để trình bày. Hiện nhóm còn lưu bảng tổng hợp, kết quả theo cặp và biểu đồ; dữ liệu dự đoán chi tiết của lượt chạy này không còn đầy đủ, nên không thể chấm lại độc lập nếu chưa khôi phục hoặc chạy lại.
 
-## 08 · Cấu trúc mã nguồn (thu gọn)
+## 08 · Cấu trúc mã nguồn
 
 ```text
 RAG-AI/
@@ -542,3 +546,9 @@ Hướng phát triển: hiệu chỉnh Evidence Score và ngưỡng trên valida
 - [Ollama – Embeddings API](https://docs.ollama.com/api/embed)
 - [Streamlit Documentation](https://docs.streamlit.io/)
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
+
+---
+
+<div align="center">
+
+</div>
