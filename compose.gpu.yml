@@ -1,6 +1,11 @@
-# Optional NVIDIA GPU support if Docker Desktop and NVIDIA runtime are configured.
 services:
   ollama:
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KEEP_ALIVE: "1m"
+
     deploy:
       resources:
         reservations:

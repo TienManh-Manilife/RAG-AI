@@ -22,15 +22,10 @@ docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --r
 
 2. END-TO-END: 5 cấu hình (giữ nguyên LLM, prompt, Top-5, RBAC)
 ------------------------------------------------------------
-# E1 - Lexical / EH-RAG w/o Dense
 docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method lexical
-# E2 - Dense-only (E = semantic score; cùng ngưỡng)
 docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method dense
-# E3 - Standard Hybrid / EH-RAG w/o Reranking: chỉ bỏ +0.03E khi xếp hạng; giữ chung E gate.
 docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method standard_hybrid
-# E4 - EH-RAG Full: giữ đúng pipeline ứng dụng
 docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid
-# E5 - EH-RAG w/o Evidence Gate: bỏ 2 ngưỡng E, giữ xếp hạng + kiểm tra đầu ra + RBAC + personal handoff.
 docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method no_gate
 
 3. Chấm lại / tổng hợp trên HOST (không cần Docker, Ollama, GPU, DB)
