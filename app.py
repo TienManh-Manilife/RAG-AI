@@ -285,27 +285,45 @@ def metrics_page():
 
 def benchmark_page():
     require_role(actor)
-    banner('Kiểm thử chất lượng RAG','50 câu có nhãn chuẩn: 40 câu trả lời được và 10 câu cần từ chối/chuyển nhân viên.','EVALUATION LAB')
-    rows=read_cases()
+    from rag_engine.benchmark import FIXTURE,FIXTURE_200,validate_corpus
+    from rag_engine.benchmark_run import run
+    from rag_engine.benchmark_score import grade_file,digest,load_raw
+    banner('Kiểm thử chất lượng RAG','Bộ 200 câu có nhãn; dự đoán thô và chấm điểm độc lập.','EVALUATION LAB')
+    dataset=st.selectbox('Bộ câu hỏi',['200','50'])
+    rows=read_cases(FIXTURE_200 if dataset=='200' else FIXTURE)
     a,b,c=st.columns(3)
-    a.metric('Câu hỏi chuẩn',len(rows))
-    b.metric('Có căn cứ',sum(not x['should_handoff'] for x in rows))
-    c.metric('Thiếu căn cứ',sum(x['should_handoff'] for x in rows))
-    st.caption('Chấm Retrieval Recall@5, handoff precision/recall/F1, tỷ lệ trích dẫn và độ phủ cụm từ khóa. Độ phủ từ khóa KHÔNG phải accuracy ngữ nghĩa.')
-    mode=st.radio('Chế độ chạy',['retrieval','full'],format_func=lambda x:'Chỉ đánh giá truy xuất (nhanh)' if x=='retrieval' else 'End-to-end: chạy LLM cho từng câu (chậm)',horizontal=True)
-    count=st.slider('Số câu chạy',1,50,50)
-    if st.button('Chạy bộ kiểm thử',type='primary'):
-        progress=st.progress(0)
-        with st.spinner('Đang thực thi trên dữ liệu và model hiện tại…'):
-            report=run_benchmark(rows[:count],retrieval_only=(mode=='retrieval'),progress=lambda i,n:progress.progress(i/n))
-        write_report(report)
-        st.session_state.evaluated=report
-    report=st.session_state.evaluated
-    if not report:
-        f=DATA_DIR/'reports'/'benchmark_latest.json'
-        if f.is_file():
-            try:report=json.loads(f.read_text(encoding='utf-8'))
-            except (ValueError,OSError):pass
+    a.metric('Câu hỏi chuẩn',len(rows));b.metric('Có căn cứ',sum(not x['should_handoff'] for x in rows));c.metric('Cần chuyển tiếp',sum(x['should_handoff'] for x in rows))
+    mode=st.radio('Chế độ chạy',['retrieval','full'],format_func=lambda x:'Retrieval-only' if x=='retrieval' else 'End-to-end',horizontal=True)
+    methods=['hybrid','lexical','dense','standard_hybrid']+(['no_gate'] if mode=='full' else [])
+    method=st.selectbox('Phương pháp',methods,format_func=lambda x:{'hybrid':'EH-RAG (full)','lexical':'Lexical','dense':'Dense-only','standard_hybrid':'Standard Hybrid (RRF; giữ gate chung)','no_gate':'EH-RAG w/o Evidence Gate'}[x])
+    run_id=st.text_input('Run ID','default')
+    import re
+    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',run_id):st.error('Run ID chỉ gồm chữ, số, gạch ngang hoặc gạch dưới.');return
+    count=st.slider('Số câu mới tối đa mỗi lượt',1,len(rows),min(10,len(rows)))
+    mode_name='retrieval_only' if mode=='retrieval' else 'end_to_end'
+    dest=DATA_DIR/'reports'/f'v{dataset}'/f'{mode_name}_{method}_all_{run_id}'
+    raw_path=dest/'predictions.json';score_path=dest/'scores.json'
+    st.caption('Chạy lại cùng Run ID sẽ bỏ qua ca đã lưu, kể cả ca sai. Chấm lại không gọi mô hình.')
+    col1,col2=st.columns(2)
+    if col1.button('Chạy / tiếp tục benchmark',type='primary'):
+        status=st.empty()
+        try:
+            validate_corpus(rows)
+            with st.spinner('Đang chạy các ca chưa hoàn thành…'):
+                report,_=run(rows,method=method,retrieval_only=mode=='retrieval',dataset=dataset,run_id=run_id,max_new=count,announce=lambda m:status.caption(m))
+            if report['stop_reason']=='system_error':st.warning('Lỗi hạ tầng; ca lỗi chưa hoàn thành. Kiểm tra Ollama rồi chạy tiếp.')
+        except Exception as exc:st.error(str(exc))
+    if col2.button('Chấm lại từ dự đoán đã lưu',disabled=not raw_path.exists()):
+        try:grade_file(raw_path);st.success('Đã chấm lại; không gọi mô hình.')
+        except Exception as exc:st.error(str(exc))
+    report=None
+    if score_path.exists() and raw_path.exists():
+        try:
+            candidate=json.loads(score_path.read_text(encoding='utf-8'))
+            if candidate['raw_sha256']==digest(load_raw(raw_path)):report=candidate
+            else:st.warning('Điểm cũ không khớp dự đoán mới; hãy chấm lại.')
+        except (OSError,ValueError,KeyError) as exc:st.error(str(exc))
+    if report:st.caption(f"Tiến độ: {report['completed_cases']}/{report['total_cases']} · {'COMPLETE' if report['complete'] else 'PARTIAL'}")
     if report:
         summary=report['summary']
         st.markdown('### Kết quả đã đo · '+report['mode'])
@@ -329,29 +347,28 @@ def benchmark_page():
         st.dataframe([{k:(str(r[k]) if isinstance(r[k],list) else r[k]) for k in ('id','question','retrieval_hit_at_5','pred_handoff','term_coverage','errors')} for r in report['cases']],
                      use_container_width=True,hide_index=True)
         if report['mode']=='end_to_end':
-            with st.expander('Thẩm định bởi chuyên gia (không tự suy ra từ điểm retrieval)'):
-                st.caption('Đánh dấu Đúng/Sai sau khi đối chiếu câu trả lời với nguồn chuẩn. Chỉ các mẫu đã gắn nhãn mới được tính vào expert accuracy.')
-                for record in report['cases']:
-                    st.selectbox(record['id']+' · '+record['question'][:85],
-                                 ['Chưa đánh giá','Đúng','Sai','Không áp dụng'],
-                                 index=['Chưa đánh giá','Đúng','Sai','Không áp dụng'].index(
-                                     record.get('expert_label','Chưa đánh giá')) if record.get('expert_label','Chưa đánh giá') in
-                                         ['Chưa đánh giá','Đúng','Sai','Không áp dụng'] else 0,
-                                 key='expert:'+record['id'])
-                if st.button('Lưu kết quả chuyên gia'):
-                    for record in report['cases']:
-                        record['expert_label']=st.session_state.get('expert:'+record['id'],'Chưa đánh giá')
-                    labels=[r['expert_label'] for r in report['cases'] if r.get('expert_label') in ('Đúng','Sai')]
-                    report['summary']['expert_reviewed']=len(labels)
-                    report['summary']['expert_accuracy']=sum(x=='Đúng' for x in labels)/len(labels) if labels else None
-                    st.session_state.evaluated=report
-                    write_report(report)
-                    st.success(f'Đã lưu {len(labels)} đánh giá hợp lệ.')
+            with st.expander('Thẩm định ngữ nghĩa bởi chuyên gia (tùy chọn)'):
+                st.caption('Chấm độc lập, theo nguồn chuẩn; chỉ mẫu đã thẩm định được tính vào tỷ lệ expert. Nhãn lưu tách khỏi dự đoán và được gắn hash từng ca.')
+                options=['Chưa đánh giá','Đúng','Sai','Không áp dụng']
+                selections={}
+                # Avoid creating hundreds of widgets until a reviewer opens a subset.
+                page=st.number_input('Trang thẩm định (20 câu/trang)',1,max(1,(len(report['cases'])+19)//20),1,key=f'expert-page:{dest}')
+                for record in report['cases'][(int(page)-1)*20:int(page)*20]:
+                    previous=record.get('expert_label','Chưa đánh giá')
+                    selections[record['id']]=st.selectbox(record['id']+' · '+record['question'][:85],options,index=options.index(previous) if previous in options else 0,key=f'expert:{dest}:{record["id"]}')
+                if st.button('Lưu thẩm định trang này'):
+                    from rag_engine.benchmark_score import load_raw,digest,atomic_json
+                    state=load_raw(raw_path);review_path=dest/'expert_reviews.json'
+                    reviews=json.loads(review_path.read_text(encoding='utf-8')) if review_path.exists() else {}
+                    for case_id,label in selections.items():
+                        if label=='Chưa đánh giá':reviews.pop(case_id,None)
+                        else:reviews[case_id]={'label':label,'prediction_sha256':digest(state['completed'][case_id])}
+                    atomic_json(review_path,reviews);grade_file(raw_path);st.rerun()
             if report['summary'].get('expert_accuracy') is not None:
-                st.metric('Accuracy do chuyên gia xác nhận',f"{report['summary']['expert_accuracy']:.1%}")
-                st.caption(f"Số ca được chuyên gia kiểm tra: {report['summary'].get('expert_reviewed',0)}")
+                st.metric('Tỷ lệ đúng trong các ca được chuyên gia thẩm định',f"{report['summary']['expert_accuracy']:.1%}")
+                st.caption(f"Số ca đã chấm: {report['summary']['expert_reviewed']}; không phải accuracy trên toàn tập nếu chưa chấm hết.")
         raw=json.dumps(report,ensure_ascii=False,indent=2)
-        st.download_button('Tải báo cáo JSON',raw,file_name='benchmark_latest.json',mime='application/json')
+        st.download_button('Tải báo cáo JSON',raw,file_name='scores.json',mime='application/json')
         st.info('Báo cáo chỉ phản ánh kết quả của lần chạy thực. Các ca sai từ khóa cần được chuyên gia xem xét trước khi kết luận sai ngữ nghĩa.')
 
 def admin_page():

@@ -1,21 +1,75 @@
-Thực nghiệm 1 — Lexical Retrieval
-docker compose exec -w /app app python -m rag_engine.benchmark --retrieval-only --lexical-only
-docker compose cp app:/app/data/reports/benchmark_latest.json .\retrieval_lexical.json
+RAG-AI | BENCHMARK V200 | PowerShell tại thư mục dự án
+=====================================================
+Chỉ cần chạy từng lệnh theo thứ tự. Mỗi lệnh mặc định đánh giá 200 câu.
+Không xóa results cũ. Không dùng docker compose down -v.
 
-Thực nghiệm 2 — Hybrid Retrieval
-docker compose exec -w /app app python -m rag_engine.benchmark --retrieval-only
-docker compose cp app:/app/data/reports/benchmark_latest.json .\retrieval_hybrid.json
+0. Build lại image sau khi chép patch (giữ nguyên .env và volumes)
+-----------------------------------------------------------------
+docker compose up -d --build
+docker compose ps
+docker compose exec ollama ollama list
 
-Thực nghiệm 3 — Full RAG-AI (End-to-End)
-docker compose exec -w /app app python -m rag_engine.benchmark
+1. RETRIEVAL-ONLY: 4 cấu hình (không gọi Qwen3)
+------------------------------------------------
+# R1 - Lexical (BM25 + lexical coverage, baseline cũ)
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --retrieval-only --method lexical
+# R2 - Dense-only (BGE-M3 + cosine)
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --retrieval-only --method dense
+# R3 - Standard Hybrid (BM25 + BGE-M3, chỉ RRF)
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --retrieval-only --method standard_hybrid
+# R4 - EH-RAG (RRF + 0.03E)
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --retrieval-only --method hybrid
 
-docker compose cp app:/app/data/reports/benchmark_latest.json .\benchmark_pdf_v2.json
-docker compose cp app:/app/data/reports/benchmark_latest.csv .\benchmark_pdf_v2.csv
+2. END-TO-END: 5 cấu hình (giữ nguyên LLM, prompt, Top-5, RBAC)
+------------------------------------------------------------
+# E1 - Lexical / EH-RAG w/o Dense
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method lexical
+# E2 - Dense-only (E = semantic score; cùng ngưỡng)
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method dense
+# E3 - Standard Hybrid / EH-RAG w/o Reranking: chỉ bỏ +0.03E khi xếp hạng; giữ chung E gate.
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method standard_hybrid
+# E4 - EH-RAG Full: giữ đúng pipeline ứng dụng
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid
+# E5 - EH-RAG w/o Evidence Gate: bỏ 2 ngưỡng E, giữ xếp hạng + kiểm tra đầu ra + RBAC + personal handoff.
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method no_gate
 
+3. Chấm lại / tổng hợp trên HOST (không cần Docker, Ollama, GPU, DB)
+------------------------------------------------------------------
+# Chấm lại tất cả kết quả đã lưu, không thay đổi dự đoán
+python -m rag_engine.benchmark_score results/v200
+# Hoặc chỉ chấm lại một run:
+python -m rag_engine.benchmark_score results/v200/end_to_end_hybrid_all_default/predictions.json
+# Tổng hợp chỉ kết quả hoàn chỉnh; có scope all/user/staff/legacy50/new150/type
+python scripts/parse_metrics.py results/v200
+# So sánh theo cặp và phân tích độ nhạy của bằng chứng (diagnostic, không phải handoff E2E)
+python -m rag_engine.benchmark_compare results/v200
 
-Ngoài ra, nếu muốn đánh giá riêng từng loại tài khoản:
-# Khach hang - 38 cau
-docker compose exec app python -m rag_engine.benchmark --role user
+4. Tùy chọn (không cần chạy nếu đã hoàn thành các mục 1,2)
+---------------------------------------------------------
+# Chạy từng 10 câu. Lặp đúng lệnh này cho đến 200/200, KHÔNG đổi run ID giữa chừng:
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid --max-new 10
+# Run độc lập, không đụng lần chạy default (chỉ chạy khi muốn đánh giá độ biến thiên):
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid --run-id rep2
+# Đánh giá riêng role; thông thường không cần vì all đã có báo cáo theo role:
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid --role user
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 200 --method hybrid --role staff
+# Chạy lại bộ 50 lịch sử với hệ benchmark mới, kết quả riêng trong results/v50 (không bắt buộc):
+docker compose exec -w /app app python -m rag_engine.benchmark --dataset 50 --retrieval-only --lexical-only
+# Test code (không chạy Ollama thật trong unit tests; cần dependencies Python dự án):
+docker compose exec -w /app app python -m pytest -q tests
 
-# Nhan vien - 12 cau
-docker compose exec app python -m rag_engine.benchmark --role staff
+5. Các file đầu ra
+------------------
+results/v200/<mode>_<method>_<role>_<run-id>/
+  predictions.json   # dữ liệu thô + nhãn, cũng là checkpoint lưu nguyên tử mỗi ca
+  predictions.csv    # bản xuất để đọc trực tiếp, tạo khi kết thúc lượt chạy bình thường
+  scores.json        # điểm từng ca + summary (có thể tạo lại độc lập)
+  scores.csv         # bảng chấm điểm từng ca
+  expert_reviews.json # tùy chọn, nhãn do người thẩm định thực sự nhập trên UI
+results/v200/metrics_summary.csv
+results/v200/paired_comparison.csv
+results/v200/evidence_threshold_diagnostic.csv
+
+Lưu ý: Không sửa predictions.json bằng tay. Nếu dừng đột ngột, file JSON vẫn là checkpoint.
+Chấm lại không gọi mô hình. Thay đổi dataset/corpus/model/inference đòi run ID mới.
+Scorer thay đổi được mà không cần chạy lại mô hình; chấm lại toàn bộ phương pháp bằng cùng scorer.

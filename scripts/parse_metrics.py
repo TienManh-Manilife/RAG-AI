@@ -48,7 +48,7 @@ def fmt(key, value):
             return f'{value:.3f}'
         if key == 'mrr_at_5':
             return f'{value:.4f}'
-        if key.startswith('retrieval_recall_') or 'rate' in key or key.endswith('_proxy') or key in {'handoff_precision','handoff_recall','handoff_specificity','handoff_f1'}:
+        if key.startswith('retrieval_recall_') or 'rate' in key or key.endswith('_proxy') or key in {'handoff_precision','handoff_recall','handoff_specificity','handoff_f1','handoff_accuracy','expert_accuracy'}:
             return f'{value * 100:.2f}%'
     return str(value)
 
@@ -61,7 +61,8 @@ def main():
     root = args.results
     reports = []
     # Ignore the root-level latest report, which duplicates the most recent run.
-    for path in sorted(root.glob('*/benchmark_latest.json')):
+    paths = list(root.glob('*/benchmark_latest.json')) + list(root.glob('*/scores.json'))
+    for path in sorted(paths):
         try:
             report = read_json(path)
             cases = report['cases']
@@ -70,7 +71,13 @@ def main():
             if len(ids) != len(set(ids)) or done != len(ids) or done > total:
                 raise ValueError('Invalid case count or duplicate IDs')
             checkpoint = path.with_name('checkpoint.txt')
-            if checkpoint.exists():
+            if report.get('schema') == 'rag-ai-score-v2':
+                import hashlib
+                raw = read_json(path.with_name('predictions.json'))
+                raw_hash = hashlib.sha256(json.dumps(raw,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+                if raw_hash != report['raw_sha256'] or raw['identity'] != report['identity']:
+                    raise ValueError('Stale scores; run python -m rag_engine.benchmark_score first')
+            elif checkpoint.exists():
                 state = read_json(checkpoint)
                 if (set(state['completed']) != set(ids) or len(state['case_ids']) != total
                     or state['identity'] != report['identity']
@@ -90,12 +97,15 @@ def main():
         raise SystemExit('No usable reports found. Check the results folder and benchmark status.')
     rows = []
     for name, report, cases, complete in reports:
-        for scope, summary in [('all', report['summary']), *report.get('by_role', {}).items()]:
-            selected = cases if scope == 'all' else [r for r in cases if r['actor_role'] == scope]
+        for scope, summary in [('all', report['summary']), *report.get('by_role', {}).items(), *[(f'split:{k}',v) for k,v in report.get('by_split',{}).items()], *[(f'type:{k}',v) for k,v in report.get('by_type',{}).items()]]:
+            selected = cases if scope == 'all' else [r for r in cases if (r.get('split') == scope[6:] if scope.startswith('split:') else r.get('question_type') == scope[5:] if scope.startswith('type:') else r['actor_role'] == scope)]
             row = {'run': name, 'scope': scope, 'complete': complete,
                    'run_completed_cases': report['completed_cases'], 'run_total_cases': report['total_cases'],
                    'failed_attempts_run': report.get('failed_attempts'), 'mode': report['mode'],
-                   'method': 'hybrid' if report['dense_requested'] else 'lexical',
+                   'method': report.get('method', 'hybrid' if report['dense_requested'] else 'lexical'),
+                   'dataset': report.get('dataset'),
+                   'scorer_sha256': report.get('scorer_sha256'),
+                   'embedding_sha256': report.get('identity',{}).get('embedding_sha256'),
                    'dataset_sha256': report.get('identity', {}).get('dataset_sha256'),
                    'corpus_sha256': report.get('identity', {}).get('corpus_sha256'),
                    'source_sha256': report.get('identity', {}).get('source_sha256'),
